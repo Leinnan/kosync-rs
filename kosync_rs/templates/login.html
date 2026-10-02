@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+
+{% block title %}Sign in{% endblock title %}
+{% block body_class %}auth-page{% endblock body_class %}
+
+{% block content %}
+<article class="auth-card">
+  <header>
+    <span class="brand-mark">{{ icons::icon(name="book") }}</span>
+    <h1>Sign in</h1>
+    <p>Use your KOReader sync credentials.</p>
+  </header>
+
+  {% if error %}
+  <p id="login-error" class="status-message error" role="alert">{{ error }}</p>
+  {% endif %}
+
+  <form method="post" action="/login">
+    <label>
+      Username
+      <input type="text" name="username" value="{{ form_username | default(value='') }}" autocomplete="username" required autofocus
+             {% if error %}aria-describedby="login-error" aria-invalid="true"{% endif %}>
+    </label>
+    <label for="login-password">Password</label>
+    <div class="password-field">
+      <input id="login-password" type="password" name="password" autocomplete="current-password" required
+             {% if error %}aria-describedby="login-error" aria-invalid="true"{% endif %}>
+      <button type="button" class="icon-button" data-toggle-password="login-password"
+              aria-label="Show password" aria-pressed="false">{{ icons::icon(name="eye") }}</button>
+    </div>
+    <button type="submit">Sign in</button>
+  </form>
+
+  <p class="auth-hint">
+    New to this server? Register from KOReader's <em>Progress sync</em> plugin using
+    this server's address, then sign in here with the same credentials.
+    <br><a href="/help">How to connect an e-reader</a>
+  </p>
+</article>
+{% endblock content %}

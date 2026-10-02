@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+
+{% block title %}Search{% endblock title %}
+
+{% block content %}
+<div class="search-page">
+  <div class="page-header">
+    <hgroup>
+      <h1>Search</h1>
+      <p>Find books in the library, synced documents, and pages. Tip: press <kbd>Ctrl</kbd> <kbd>K</kbd> anywhere.</p>
+    </hgroup>
+  </div>
+
+  <form class="toolbar" method="get" action="/search"
+        hx-get="/search" hx-target="#search-results" hx-push-url="true"
+        hx-trigger="input changed delay:200ms, search">
+    <div class="search-field">
+      {{ icons::icon(name="search") }}
+      <label class="visually-hidden" for="search-query">Search</label>
+      <input id="search-query" type="search" name="q" value="{{ q }}" placeholder="Search books, documents, and pages…" autocomplete="off" autofocus>
+    </div>
+    <noscript><button type="submit">Search</button></noscript>
+  </form>
+
+  <div id="search-results" class="palette-results">
+    {% include "search_results.html" %}
+  </div>
+</div>
+{% endblock content %}

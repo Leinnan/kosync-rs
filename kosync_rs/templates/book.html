@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+{% import "cards.html" as cards %}
+
+{% block title %}{{ book.title }}{% endblock title %}
+
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/books">{{ icons::icon(name="chevron-left") }}Library</a>
+  {% if book.series %}
+    <span class="separator">/</span>
+    <a href="/books?series={{ book.series | urlencode }}&amp;sort=series">{{ book.series }}</a>
+  {% endif %}
+</nav>
+
+<section class="book-hero"{% if book.has_cover %} style="--cover: url(/books/{{ book.document_hash }}/thumbnail)"{% endif %}>
+  <figure class="cover-container">
+    {% if book.has_cover %}
+      <img src="/books/{{ book.document_hash }}/cover" alt="Cover of {{ book.title }}">
+    {% else %}
+      <div class="cloth-cover" style="--hue: {{ book.hue }}"><span>{{ book.title }}</span></div>
+    {% endif %}
+  </figure>
+
+  <div class="book-hero-body">
+    <h1>{{ book.title }}</h1>
+    {% if book.authors %}<p class="book-byline">by {{ book.authors }}</p>{% endif %}
+    {% if book.series %}
+    <p class="book-byline">
+      {% if book.series_index %}Book {{ book.series_index }} of {% endif %}<a href="/books?series={{ book.series | urlencode }}&amp;sort=series">{{ book.series }}</a>
+    </p>
+    {% endif %}
+
+    {% if book.genres %}
+    <ul class="filter-chips">
+      {% for genre in book.genres %}
+      <li><a class="chip" href="/books?genre={{ genre | urlencode }}">{{ genre }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <div class="book-actions">
+      <a href="/books/{{ book.document_hash }}/download" role="button" class="with-icon">{{ icons::icon(name="download") }}Download EPUB</a>
+      {% if book.history_hash %}
+      <a href="/documents/{{ book.history_hash }}" role="button" class="secondary with-icon">{{ icons::icon(name="history") }}View sync history</a>
+      {% endif %}
+      {% if is_admin %}
+      <details class="menu">
+        <summary aria-label="More actions">{{ icons::icon(name="more") }}</summary>
+        <div class="menu-panel">
+          <button type="button" class="menu-item menu-item-danger" data-dialog-open="delete_modal">{{ icons::icon(name="trash") }}Delete book…</button>
+        </div>
+      </details>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<div class="book-body">
+  <div>
+    {% if book.description %}
+    <section class="section" aria-labelledby="about-heading">
+      <h2 id="about-heading" class="visually-hidden">Description</h2>
+      <div class="book-description">{{ book.description }}</div>
+    </section>
+    {% endif %}
+
+    {% if series_books %}
+    <section class="section series-rail" aria-labelledby="series-heading">
+      <div class="section-header">
+        <h2 id="series-heading">More in {{ book.series }}</h2>
+        <a href="/books?series={{ book.series | urlencode }}&amp;sort=series">View series</a>
+      </div>
+      <div class="rail">
+        {% for sibling in series_books %}
+        {% set is_current = sibling.document_hash == book.document_hash %}
+        {{ cards::book_card(book=sibling, current=is_current) }}
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  </div>
+
+  <aside>
+    <div class="card">
+      {% if book.has_progress %}
+      <div class="progress-card">
+        <svg class="ring" viewBox="0 0 120 120" role="img" aria-label="{{ book.percent }} read">
+          <circle class="ring-track" cx="60" cy="60" r="50"/>
+          <circle class="ring-value" cx="60" cy="60" r="50" pathLength="100"
+                  stroke-dasharray="{{ book.percentage * 100 }} 100"/>
+          <text x="60" y="60">{{ book.percentage | pct }}</text>
+        </svg>
+        <div>
+          <h3>Your reading progress</h3>
+          <p>{{ book.percent }} completed</p>
+          {% if book.synced %}
+          <p>Synced <time datetime="{{ book.synced }}">{{ book.synced | timeago }}</time>{% if book.device %} from {{ book.device }}{% endif %}</p>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <div class="progress-card">
+        <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="ring-track" cx="60" cy="60" r="50"/>
+          <text x="60" y="60">0%</text>
+        </svg>
+        <div>
+          <h3>Not started</h3>
+          <p>Download this book to an e-reader and sync with KOReader to track progress here.</p>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">{{ icons::icon(name="book") }}Details</h2>
+      <dl class="meta-list">
+        {% if book.language %}<dt>Language</dt><dd>{{ book.language }}</dd>{% endif %}
+        {% if book.publisher %}<dt>Publisher</dt><dd>{{ book.publisher }}</dd>{% endif %}
+        {% if book.published %}<dt>Published</dt><dd>{{ book.published }}</dd>{% endif %}
+        {% if book.isbn %}<dt>ISBN</dt><dd>{{ book.isbn }}</dd>{% endif %}
+        <dt>File size</dt><dd>{{ book.file_size }}</dd>
+        <dt>Added</dt><dd><time datetime="{{ book.created }}" title="{{ book.created | datefmt }}">{{ book.created | timeago }}</time></dd>
+        <dt>Updated</dt><dd><time datetime="{{ book.updated }}" title="{{ book.updated | datefmt }}">{{ book.updated | timeago }}</time></dd>
+      </dl>
+
+      <details class="tech-details">
+        <summary>Technical information</summary>
+        {% if book.progress %}<code>Position: {{ book.progress }}</code>{% endif %}
+        {% if book.identifier %}<code>Identifier: {{ book.identifier }}</code>{% endif %}
+        <code>Hash: {{ book.document_hash }}</code>
+      </details>
+    </div>
+  </aside>
+</div>
+
+{% if is_admin %}
+<dialog id="delete_modal">
+  <article>
+    <header>
+      <h3>Delete this book?</h3>
+    </header>
+    <p><strong>{{ book.title }}</strong> and its cover will be removed from the shared library for everyone. Reading progress stays in each account. This cannot be undone.</p>
+    <footer>
+      <button type="button" class="secondary" data-dialog-close>Cancel</button>
+      <form action="/books/{{ book.document_hash }}/delete" method="post">
+        <button type="submit" class="danger">Delete book</button>
+      </form>
+    </footer>
+  </article>
+</dialog>
+{% endif %}
+{% endblock content %}

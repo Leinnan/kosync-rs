@@ -1,0 +1,9 @@
+.git
+**/target
+data/
+*.db
+.env
+.env.*
+!.env.example
+.opencode
+**/.DS_Store

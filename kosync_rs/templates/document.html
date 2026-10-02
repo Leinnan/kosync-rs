@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+
+{% block title %}{% if document.book %}{{ document.book.title }}{% elif document.fallback_title %}{{ document.fallback_title }}{% else %}Document {{ document.document_hash }}{% endif %} · History{% endblock title %}
+
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/">{{ icons::icon(name="chevron-left") }}Reading progress</a>
+  {% if document.book %}
+    <span class="separator">/</span>
+    <a href="/books/{{ document.book.document_hash }}">{{ document.book.title }}</a>
+  {% endif %}
+</nav>
+
+<header class="doc-header">
+  {% if document.book %}
+  <a class="cover-container" href="/books/{{ document.book.document_hash }}" tabindex="-1" aria-hidden="true">
+    {% if document.book.has_thumb %}
+      <img src="/books/{{ document.book.document_hash }}/thumbnail" alt="">
+    {% else %}
+      <div class="cloth-cover" style="--hue: {{ document.book.hue }}"></div>
+    {% endif %}
+  </a>
+  {% endif %}
+  <hgroup>
+    {% if document.book %}
+      <h1><a href="/books/{{ document.book.document_hash }}">{{ document.book.title }}</a></h1>
+      {% if document.book.author %}<p>{{ document.book.author }}</p>{% endif %}
+    {% elif document.fallback_title %}
+      <h1>{{ document.fallback_title }}</h1>
+      {% if document.fallback_author %}<p>{{ document.fallback_author }}</p>{% endif %}
+    {% else %}
+      <h1><code>{{ document.document_hash }}</code></h1>
+    {% endif %}
+    <p>Sync history · {{ sync_label }}</p>
+  </hgroup>
+</header>
+
+<section class="kpi-row" aria-label="Summary">
+  <div class="stat">
+    <span class="stat-label">{{ icons::icon(name="book") }}Progress</span>
+    <span class="stat-value">{{ document.percentage | pct }}</span>
+    <span class="stat-hint">{{ document.percent }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">{{ icons::icon(name="device") }}Current device</span>
+    <span class="stat-value" style="font-size: 1.25rem">{{ document.device }}</span>
+    <span class="stat-hint">synced <time datetime="{{ document.synced }}">{{ document.synced | timeago }}</time></span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">{{ icons::icon(name="flag") }}First recorded</span>
+    <span class="stat-value" style="font-size: 1.25rem"><time datetime="{{ document.first_recorded }}">{{ document.first_recorded | datefmt }}</time></span>
+    <span class="stat-hint">{{ document.first_recorded | timeago }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">{{ icons::icon(name="sync") }}Last recorded</span>
+    <span class="stat-value" style="font-size: 1.25rem"><time datetime="{{ document.last_recorded }}">{{ document.last_recorded | datefmt }}</time></span>
+    <span class="stat-hint">{{ document.last_recorded | timeago }}</span>
+  </div>
+</section>
+
+<div class="history-grid">
+  <div>
+    {% if document.chart %}
+    <section class="card" aria-labelledby="chart-heading">
+      <h2 id="chart-heading" class="card-title">{{ icons::icon(name="activity") }}Progress over time</h2>
+      <svg class="chart" viewBox="0 0 640 220" role="img" aria-label="Reading progress for each sync, from {{ document.chart.start_label }} to {{ document.chart.end_label }}">
+        <line class="grid-line" x1="40" x2="624" y1="12" y2="12"/>
+        <line class="grid-line" x1="40" x2="624" y1="102" y2="102"/>
+        <line class="grid-line" x1="40" x2="624" y1="192" y2="192"/>
+        <text class="axis-label end" x="32" y="16">100%</text>
+        <text class="axis-label end" x="32" y="106">50%</text>
+        <text class="axis-label end" x="32" y="196">0%</text>
+        <text class="axis-label" x="40" y="214">{{ document.chart.start_label }}</text>
+        <text class="axis-label end" x="624" y="214">{{ document.chart.end_label }}</text>
+        <path class="area" d="{{ document.chart.area }}"/>
+        <path class="line" d="{{ document.chart.line }}"/>
+        {% for point in document.chart.points %}
+        <circle class="point dev-{{ point.colour }}" cx="{{ point.x }}" cy="{{ point.y }}" r="4.5"><title>{{ point.label }}</title></circle>
+        {% endfor %}
+      </svg>
+      {% if document.devices | length > 1 %}
+      <ul class="legend">
+        {% for device in document.devices %}
+        <li class="dev-{{ device.colour }}"><span class="swatch"></span>{{ device.device }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endif %}
+
+  </div>
+
+  <aside>
+    {% if document.events %}
+    <section class="card" aria-labelledby="events-heading">
+      <h2 id="events-heading" class="card-title">{{ icons::icon(name="history") }}Recent syncs</h2>
+      <ul class="event-list">
+        {% for event in document.events %}
+        <li>
+          <span class="swatch dev-{{ event.colour }}"></span>
+          <span class="event-device">
+            {{ event.device }}
+            <small><time datetime="{{ event.synced }}" title="{{ event.synced | datefmt }}">{{ event.synced | timeago }}</time></small>
+          </span>
+          <span class="event-value">
+            {{ event.percentage | pct }}
+            {% if event.delta %}<span class="delta {{ event.trend }}">{{ event.delta }}</span>{% endif %}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    <details class="tech-details">
+      <summary>Technical information</summary>
+      <code>Position: {{ document.progress }}</code>
+      <code>Hash: {{ document.document_hash }}</code>
+    </details>
+  </aside>
+</div>
+
+{% if document.devices %}
+<section class="card" aria-labelledby="devices-heading">
+  <h2 id="devices-heading" class="card-title">{{ icons::icon(name="device") }}Progress by device</h2>
+  <div class="share-bar" role="img" aria-label="Share of reading progress by device">
+    {% for device in document.devices %}{% if device.share > 0 %}<span class="dev-{{ device.colour }}" style="width: {{ device.share }}%" title="{{ device.device }}: {{ device.contribution }}"></span>{% endif %}{% endfor %}
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Device</th>
+          <th scope="col">First seen</th>
+          <th scope="col">Last seen</th>
+          <th scope="col" class="num">Syncs</th>
+          <th scope="col" class="num">Contributed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for device in document.devices %}
+        <tr>
+          <td class="dev-{{ device.colour }}">
+            <span class="swatch"></span>
+            {{ device.device }}
+            {% if device.device_id %}<br><small class="muted"><code>{{ device.device_id }}</code></small>{% endif %}
+          </td>
+          <td><time datetime="{{ device.first_seen }}">{{ device.first_seen | timeago }}</time></td>
+          <td><time datetime="{{ device.last_seen }}">{{ device.last_seen | timeago }}</time></td>
+          <td class="num">{{ device.sync_count }}</td>
+          <td class="num">{{ device.contribution }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock content %}

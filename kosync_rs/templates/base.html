@@ -1,0 +1,140 @@
+{% import "icons.html" as icons %}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Self-hosted KOReader sync server with a shared EPUB library.">
+  <title>{% block title %}kosync-rs{% endblock title %} · kosync</title>
+  <script>
+    (function () {
+      var pref = 'auto';
+      try { pref = localStorage.getItem('theme') || 'auto'; } catch (e) {}
+      if (pref === 'light' || pref === 'dark') {
+        document.documentElement.setAttribute('data-theme', pref);
+      } else {
+        pref = 'auto';
+      }
+      document.documentElement.setAttribute('data-theme-pref', pref);
+    })();
+  </script>
+  <link rel="stylesheet" href="{{ static_url(name="pico.sand.min.css") | safe }}">
+  <link rel="stylesheet" href="{{ static_url(name="app.css") | safe }}">
+  <script src="{{ static_url(name="htmx.min.js") | safe }}" defer></script>
+  <script src="{{ static_url(name="app.js") | safe }}" defer></script>
+  {% block head %}{% endblock head %}
+</head>
+<body class="{% if username %}has-tabbar{% endif %} {% block body_class %}{% endblock body_class %}">
+  <a class="skip-link" href="#content">Skip to content</a>
+
+  <header class="app-header">
+    <div class="container app-header-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">{{ icons::icon(name="book") }}</span>
+        <span class="brand-name">kosync</span>
+      </a>
+
+      {% if username %}
+      <nav class="primary-nav" aria-label="Main">
+        <a class="nav-link" href="/" {% if active == "progress" %}aria-current="page"{% endif %}>{{ icons::icon(name="activity") }}<span>Progress</span></a>
+        <a class="nav-link" href="/books" {% if active == "books" %}aria-current="page"{% endif %}>{{ icons::icon(name="library") }}<span>Library</span></a>
+        {% if can_upload %}
+        <a class="nav-link" href="/books/upload" {% if active == "upload" %}aria-current="page"{% endif %}>{{ icons::icon(name="upload") }}<span>Upload</span></a>
+        {% endif %}
+        {% if is_admin %}
+        <a class="nav-link" href="/admin/users" {% if active == "users" %}aria-current="page"{% endif %}>{{ icons::icon(name="users") }}<span>Users</span></a>
+        {% endif %}
+      </nav>
+      {% endif %}
+
+      <div class="header-actions">
+        {% if username %}
+        <a class="search-trigger" href="/search" data-palette-open aria-keyshortcuts="Control+K Meta+K">
+          {{ icons::icon(name="search") }}
+          <span class="search-trigger-label">Search</span>
+          <kbd class="search-trigger-kbd">Ctrl K</kbd>
+        </a>
+        {% endif %}
+
+        <button type="button" class="icon-button theme-toggle" data-theme-toggle
+                aria-label="Colour theme" title="Colour theme">
+          <span class="theme-icon theme-icon-auto">{{ icons::icon(name="monitor") }}</span>
+          <span class="theme-icon theme-icon-light">{{ icons::icon(name="sun") }}</span>
+          <span class="theme-icon theme-icon-dark">{{ icons::icon(name="moon") }}</span>
+        </button>
+
+        {% if username %}
+        <details class="menu user-menu">
+          <summary class="avatar" aria-label="Account menu for {{ username }}">{{ username | truncate(length=1, end="") | upper }}</summary>
+          <div class="menu-panel">
+            <p class="menu-heading">Signed in as <strong>{{ username }}</strong></p>
+            <a class="menu-item" href="/settings" {% if active == "settings" %}aria-current="page"{% endif %}>{{ icons::icon(name="settings") }}Settings</a>
+            <a class="menu-item" href="/help">{{ icons::icon(name="help") }}Connect an e-reader</a>
+            <hr>
+            <a class="menu-item" href="/logout">{{ icons::icon(name="logout") }}Logout</a>
+          </div>
+        </details>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  <main id="content" class="container app-main" tabindex="-1">
+    {% block content %}{% endblock content %}
+  </main>
+
+  <footer class="container app-footer">
+    <span>kosync-rs · self-hosted KOReader sync</span>
+    <nav aria-label="Footer">
+      <a href="/help">Connect an e-reader</a>
+      <span>OPDS <code>/opds/</code></span>
+    </nav>
+  </footer>
+
+  {% if username %}
+  <nav class="tabbar" aria-label="Main (mobile)">
+    <a class="tab" href="/" {% if active == "progress" %}aria-current="page"{% endif %}>{{ icons::icon(name="activity") }}<span>Progress</span></a>
+    <a class="tab" href="/books" {% if active == "books" %}aria-current="page"{% endif %}>{{ icons::icon(name="library") }}<span>Library</span></a>
+    <a class="tab" href="/search" data-palette-open>{{ icons::icon(name="search") }}<span>Search</span></a>
+    {% if can_upload %}
+    <a class="tab" href="/books/upload" {% if active == "upload" %}aria-current="page"{% endif %}>{{ icons::icon(name="upload") }}<span>Upload</span></a>
+    {% endif %}
+    {% if is_admin %}
+    <a class="tab" href="/admin/users" {% if active == "users" %}aria-current="page"{% endif %}>{{ icons::icon(name="users") }}<span>Users</span></a>
+    {% endif %}
+  </nav>
+
+  <dialog id="palette" class="palette" aria-label="Search">
+    <form class="palette-form" method="get" action="/search">
+      {{ icons::icon(name="search") }}
+      <label class="visually-hidden" for="palette-input">Search books, documents, and pages</label>
+      <input id="palette-input" type="search" name="q" autocomplete="off" spellcheck="false"
+             placeholder="Search books, documents, and pages…"
+             role="combobox" aria-expanded="true" aria-controls="palette-results" aria-autocomplete="list"
+             hx-get="/search" hx-trigger="input changed delay:150ms, search, paletteopen"
+             hx-target="#palette-results" hx-sync="this:replace">
+      <kbd>Esc</kbd>
+    </form>
+    <div id="palette-results" class="palette-results" role="listbox" aria-label="Results"></div>
+    <footer class="palette-footer">
+      <span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span>
+      <span><kbd>↵</kbd> to open</span>
+      <span><kbd>Esc</kbd> to close</span>
+    </footer>
+  </dialog>
+  {% endif %}
+
+  <dialog id="confirm-dialog" class="confirm-dialog">
+    <article>
+      <h3 id="confirm-title">Are you sure?</h3>
+      <p id="confirm-message"></p>
+      <footer>
+        <button type="button" class="secondary" data-dialog-close>Cancel</button>
+        <button type="button" class="danger" id="confirm-accept">Confirm</button>
+      </footer>
+    </article>
+  </dialog>
+
+  <div id="app-toast" class="toast toast-error" role="alert" hidden></div>
+</body>
+</html>

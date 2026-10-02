@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+{% import "cards.html" as cards %}
+
+{% block title %}Settings{% endblock title %}
+
+{% block content %}
+<div class="page-header">
+  <hgroup>
+    <h1>Settings</h1>
+    <p>Manage your account and how kosync looks on this device.</p>
+  </hgroup>
+</div>
+
+{{ cards::flash(error=error | default(value=""), notice=notice | default(value="")) }}
+
+<div class="settings-layout">
+  <nav class="settings-nav" aria-label="Settings sections">
+    <a href="#account">{{ icons::icon(name="key") }}Account</a>
+    <a href="#appearance">{{ icons::icon(name="sun") }}Appearance</a>
+    {% if is_admin %}<a href="#admin">{{ icons::icon(name="shield") }}Administration</a>{% endif %}
+  </nav>
+
+  <div>
+    <section class="card" id="account" aria-labelledby="account-heading">
+      <h2 id="account-heading" class="card-title">{{ icons::icon(name="key") }}Change your password</h2>
+      <form class="form-narrow" method="post" action="/settings/password">
+        <label>Current password
+          <input type="password" name="current_password" required autocomplete="current-password">
+        </label>
+        <label for="new-password">New password</label>
+        <input id="new-password" type="password" name="new_password" required autocomplete="new-password">
+        <div class="strength" data-strength="new-password" data-score="0" hidden aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <small class="field-hint">This also changes the password KOReader uses to sync. Update it on your devices afterwards.</small>
+        <button type="submit">Change password</button>
+      </form>
+    </section>
+
+    <section class="card" id="appearance" aria-labelledby="appearance-heading">
+      <h2 id="appearance-heading" class="card-title">{{ icons::icon(name="sun") }}Appearance</h2>
+      <fieldset class="theme-options">
+        <legend class="visually-hidden">Colour theme</legend>
+        <label class="theme-option"><input type="radio" name="theme-choice" value="auto">{{ icons::icon(name="monitor") }}System</label>
+        <label class="theme-option"><input type="radio" name="theme-choice" value="light">{{ icons::icon(name="sun") }}Light</label>
+        <label class="theme-option"><input type="radio" name="theme-choice" value="dark">{{ icons::icon(name="moon") }}Dark</label>
+      </fieldset>
+      <small class="field-hint" style="margin-top: 0.75rem">Saved in this browser only.</small>
+    </section>
+
+    {% if is_admin %}
+    <section class="card" id="admin" aria-labelledby="admin-heading">
+      <h2 id="admin-heading" class="card-title">{{ icons::icon(name="shield") }}Reset another user's password</h2>
+      {% if targets %}
+      <form class="form-narrow" method="post" action="/settings/user-password">
+        <label>User
+          <select name="username" required>
+            {% for target in targets %}
+            <option value="{{ target }}">{{ target }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>New password
+          <input type="password" name="password" required autocomplete="new-password">
+        </label>
+        <button type="submit">Reset password</button>
+      </form>
+      <p class="muted"><small>More account controls are on the <a href="/admin/users">Users</a> page.</small></p>
+      {% else %}
+      <p class="muted">There are no other accounts to manage. <a href="/admin/users">Create one</a>.</p>
+      {% endif %}
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock content %}

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+
+{% block title %}Upload books{% endblock title %}
+
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/books">{{ icons::icon(name="chevron-left") }}Library</a>
+</nav>
+
+<div class="page-header">
+  <hgroup>
+    <h1>Upload books</h1>
+    <p>Add EPUB files to the shared library. Covers and metadata are extracted automatically.</p>
+  </hgroup>
+</div>
+
+<div class="card">
+  <form id="upload-form" method="post" action="/books/upload" enctype="multipart/form-data"
+        hx-post="/books/upload" hx-target="#upload-results" hx-swap="innerHTML"
+        hx-encoding="multipart/form-data" hx-disabled-elt="find button[type=submit]"
+        hx-indicator="#upload-progress">
+    <div class="dropzone" id="dropzone">
+      <span class="empty-icon">{{ icons::icon(name="upload") }}</span>
+      <strong>Drop files here or click to browse</strong>
+      <p>EPUB, several at once</p>
+      <label class="visually-hidden" for="upload-files">EPUB files</label>
+      <input id="upload-files" type="file" name="file"
+             accept=".epub,application/epub+zip" multiple required>
+    </div>
+
+    <ul class="file-list" id="file-list" aria-live="polite"></ul>
+
+    <div id="upload-progress" class="upload-progress htmx-indicator">
+      <span class="spinner" aria-hidden="true"></span>
+      Uploading&hellip;
+    </div>
+
+    <button type="submit" id="upload-submit" class="with-icon">Upload</button>
+  </form>
+</div>
+
+<div id="upload-results" aria-live="polite">
+  {% include "upload_results.html" %}
+</div>
+{% endblock content %}

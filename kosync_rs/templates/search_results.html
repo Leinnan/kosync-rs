@@ -1,0 +1,52 @@
+{% import "icons.html" as icons %}
+{% if books %}
+<div class="palette-group">
+  <p class="palette-group-title">Library</p>
+  {% for book in books %}
+  <a class="palette-item" role="option" href="/books/{{ book.document_hash }}">
+    <span class="palette-thumb">
+      {% if book.has_thumb %}<img src="/books/{{ book.document_hash }}/thumbnail" alt="" loading="lazy">{% else %}<span class="cloth-cover" style="--hue: {{ book.hue }}"></span>{% endif %}
+    </span>
+    <span class="palette-item-text">
+      <strong>{{ book.title }}</strong>
+      {% if book.author %}<small>{{ book.author }}</small>{% endif %}
+    </span>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if documents %}
+<div class="palette-group">
+  <p class="palette-group-title">{% if q %}Synced documents{% else %}Recently synced{% endif %}</p>
+  {% for doc in documents %}
+  <a class="palette-item" role="option" href="/documents/{{ doc.document_hash }}">
+    <span class="palette-thumb">
+      {% if doc.thumb_hash %}<img src="/books/{{ doc.thumb_hash }}/thumbnail" alt="" loading="lazy">{% else %}<span class="cloth-cover" style="--hue: {{ doc.hue }}"></span>{% endif %}
+    </span>
+    <span class="palette-item-text">
+      <strong>{{ doc.title }}</strong>
+      <small>{{ doc.subtitle }} · <time datetime="{{ doc.synced }}">{{ doc.synced | timeago }}</time></small>
+    </span>
+    <span class="palette-item-aside">{{ doc.percentage | pct }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if actions %}
+<div class="palette-group">
+  <p class="palette-group-title">Go to</p>
+  {% for action in actions %}
+  <a class="palette-item" role="option" href="{{ action.href | safe }}">
+    {{ icons::icon(name=action.icon) }}
+    <span class="palette-item-text"><strong>{{ action.label }}</strong></span>
+    {{ icons::icon(name="arrow-right", class="palette-item-aside") }}
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if not books and not documents and not actions %}
+<p class="palette-empty">No results for “{{ q }}”.</p>
+{% endif %}

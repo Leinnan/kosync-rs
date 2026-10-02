@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+
+{% block title %}Connect an e-reader{% endblock title %}
+
+{% block content %}
+<div class="page-header">
+  <hgroup>
+    <h1>Connect an e-reader</h1>
+    <p>Sync reading positions with KOReader and browse the library from any OPDS-capable reading app.</p>
+  </hgroup>
+</div>
+
+<div class="help-grid">
+  <section class="card" aria-labelledby="sync-heading">
+    <h2 id="sync-heading" class="card-title">{{ icons::icon(name="sync") }}KOReader progress sync</h2>
+    <ol class="steps">
+      <li>
+        <strong>Open the sync settings</strong>
+        <p>In KOReader, open a book, then go to <em>Tools → Progress sync → Custom sync server</em>.</p>
+      </li>
+      <li>
+        <strong>Enter this server's address</strong>
+        <div class="copy-field">
+          <code id="sync-url" data-origin="">http://&lt;server&gt;:8090</code>
+          <button type="button" data-copy="sync-url">{{ icons::icon(name="copy") }}<span class="copy-label">Copy</span></button>
+        </div>
+      </li>
+      <li>
+        <strong>Register or log in</strong>
+        <p>Choose <em>Register / Login</em> and use the same username and password you use on this site.</p>
+      </li>
+      <li>
+        <strong>Sync</strong>
+        <p>Turn on automatic sync, or choose <em>Push progress</em>. The book will show up under Reading progress.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="card" aria-labelledby="opds-heading">
+    <h2 id="opds-heading" class="card-title">{{ icons::icon(name="rss") }}OPDS catalog</h2>
+    <p class="muted">Add a catalog in your reading app to browse and download books from the shared library.</p>
+
+    <strong>OPDS 1.x (KOReader and most e-readers)</strong>
+    <div class="copy-field">
+      <code id="opds1-url" data-origin="/opds/">http://&lt;server&gt;:8090/opds/</code>
+      <button type="button" data-copy="opds1-url">{{ icons::icon(name="copy") }}<span class="copy-label">Copy</span></button>
+    </div>
+    <p></p>
+
+    <strong>OPDS 2.0 (Readium-based and newer apps)</strong>
+    <div class="copy-field">
+      <code id="opds2-url" data-origin="/opds/v2/">http://&lt;server&gt;:8090/opds/v2/</code>
+      <button type="button" data-copy="opds2-url">{{ icons::icon(name="copy") }}<span class="copy-label">Copy</span></button>
+    </div>
+    <p></p>
+
+    <p class="muted"><small>OPDS uses HTTP Basic auth. Sign in with the same username and password you use for syncing.</small></p>
+  </section>
+</div>
+
+<section class="card" aria-labelledby="notes-heading">
+  <h2 id="notes-heading" class="card-title">{{ icons::icon(name="help") }}Good to know</h2>
+  <ul class="note-list">
+    <li>The server root (<code>/</code>) serves this web interface, not OPDS. Point e-readers at <code>/opds/</code>.</li>
+    <li>Books are matched to your reading progress by KOReader's partial MD5 document digest, so a book downloaded from the library picks up where you left off.</li>
+    <li>HTTP Basic auth sends credentials in cleartext. Put this server behind a TLS reverse proxy before exposing it to the internet.</li>
+  </ul>
+</section>
+{% endblock content %}

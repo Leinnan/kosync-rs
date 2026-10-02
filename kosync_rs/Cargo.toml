@@ -1,0 +1,38 @@
+[package]
+name = "kosync_rs"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "derive", "migrate"] }
+libsqlite3-sys = { version = "0.37", features = ["bundled"] }
+md-5 = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenv = { package = "dotenv-ng", version = "1" }
+tera = { version = "1.20", features = ["builtins"] }
+tower-cookies = { version = "0.11", features = ["private"] }
+time = { version = "0.3", features = ["formatting"] }
+epub = { version = "2.1.5", default-features = false }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+quick-xml = "0.41.0"
+base64 = "0.23.1"
+serde_json = "1"
+mime_guess = "2.0.5"
+tokio-util = { version = "0.7.19", features = ["io"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "charset"] }
+
+[dev-dependencies]
+serde_json = "1"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tempfile = "3"
+md-5 = "0.10"
+zip = "3"
+quick-xml = "0.41.0"

@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+
+{% block title %}Reading progress{% endblock title %}
+
+{% block content %}
+<div class="page-header">
+  <hgroup>
+    <h1>{% if show_dashboard %}Welcome back, {{ username }}{% else %}Reading progress{% endif %}</h1>
+    <p>Everything you've synced from KOReader, across all your devices.</p>
+  </hgroup>
+</div>
+
+{% if show_dashboard and stats %}
+<section class="stats-grid" aria-label="Reading statistics">
+  <a class="stat" href="/?status=in-progress">
+    <span class="stat-label">{{ icons::icon(name="book") }}Reading now</span>
+    <span class="stat-value">{{ stats.in_progress }}</span>
+    <span class="stat-hint">books in progress</span>
+  </a>
+  <a class="stat" href="/?status=finished">
+    <span class="stat-label">{{ icons::icon(name="flag") }}Finished</span>
+    <span class="stat-value">{{ stats.finished }}</span>
+    <span class="stat-hint">books completed</span>
+  </a>
+  <div class="stat">
+    <span class="stat-label">{{ icons::icon(name="device") }}Devices</span>
+    <span class="stat-value">{{ stats.devices_30d }}</span>
+    <span class="stat-hint">active in the last 30 days</span>
+  </div>
+  <div class="stat stat-wide">
+    <span class="stat-label">{{ icons::icon(name="activity") }}Sync activity</span>
+    <div class="stat-body">
+      <div>
+        <span class="stat-value">{{ stats.syncs_7d }}</span>
+        <span class="stat-hint">this week · {{ stats.syncs_30d }} in 30 days</span>
+      </div>
+      <svg class="sparkline" viewBox="0 0 300 48" preserveAspectRatio="none" role="img"
+           aria-label="Syncs per day over the last 30 days">
+        {% for bar in stats.bars %}
+        <rect x="{{ bar.x }}" y="{{ bar.y }}" width="7" height="{{ bar.height }}" rx="1.5"{% if bar.empty %} class="empty"{% endif %}><title>{{ bar.label }}</title></rect>
+        {% endfor %}
+      </svg>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if show_dashboard and continue_reading %}
+<section class="section" aria-labelledby="continue-heading">
+  <div class="section-header">
+    <h2 id="continue-heading">Continue reading</h2>
+    <a href="/?status=in-progress">See all</a>
+  </div>
+  <div class="rail">
+    {% for item in continue_reading %}
+    <article class="book-card">
+      <a href="{% if item.book_hash %}/books/{{ item.book_hash }}{% else %}/documents/{{ item.document_hash }}{% endif %}" class="cover-link" tabindex="-1" aria-hidden="true">
+        <figure class="cover-container">
+          {% if item.thumb_hash %}
+            <img src="/books/{{ item.thumb_hash }}/thumbnail" alt="" loading="lazy">
+          {% else %}
+            <div class="cloth-cover" style="--hue: {{ item.hue }}"><span>{{ item.title }}</span></div>
+          {% endif %}
+          <div class="cover-progress"><span style="width: {{ item.percentage * 100 }}%"></span></div>
+        </figure>
+      </a>
+      <header class="card-header">
+        <h3 class="book-title"><a href="{% if item.book_hash %}/books/{{ item.book_hash }}{% else %}/documents/{{ item.document_hash }}{% endif %}">{{ item.title }}</a></h3>
+        {% if item.author %}<p class="book-author">{{ item.author }}</p>{% endif %}
+        <p class="rail-meta"><strong>{{ item.percentage | pct }}</strong><span>·</span><time datetime="{{ item.synced }}">{{ item.synced | timeago }}</time></p>
+      </header>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section aria-labelledby="library-heading">
+  <div class="section-header">
+    <h2 id="library-heading">{% if show_dashboard %}All synced documents{% else %}Results{% endif %}</h2>
+  </div>
+
+  <form class="toolbar" method="get" action="/"
+        hx-get="/" hx-target="#documents" hx-swap="innerHTML"
+        hx-push-url="true" hx-indicator="#documents"
+        hx-trigger="change, input changed delay:300ms, search">
+    <div class="search-field">
+      {{ icons::icon(name="search") }}
+      <label class="visually-hidden" for="progress-query">Search documents</label>
+      <input id="progress-query" type="search" name="query"
+             placeholder="Search title, author, or file name" value="{{ query }}" autocomplete="off">
+    </div>
+
+    <label class="select-inline">
+      <span class="visually-hidden">Status</span>
+      <select name="status" aria-label="Status">
+        <option value="" {% if not status %}selected{% endif %}>All statuses</option>
+        <option value="in-progress" {% if status == "in-progress" %}selected{% endif %}>In progress</option>
+        <option value="finished" {% if status == "finished" %}selected{% endif %}>Finished</option>
+      </select>
+    </label>
+
+    <label class="select-inline">
+      <span class="visually-hidden">Sort</span>
+      <select name="sort" aria-label="Sort">
+        <option value="recent" {% if sort != "title" %}selected{% endif %}>Recently synced</option>
+        <option value="title" {% if sort == "title" %}selected{% endif %}>Title A–Z</option>
+      </select>
+    </label>
+
+    <noscript><button type="submit" class="secondary">Apply</button></noscript>
+  </form>
+
+  <div id="documents" class="results-region" aria-live="polite">
+    {% include "progress_table.html" %}
+  </div>
+</section>
+{% endblock content %}

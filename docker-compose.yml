@@ -1,0 +1,19 @@
+services:
+  kosync:
+    build: .
+    container_name: kosync
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - KOSYNC_RS_HOST=0.0.0.0
+      - KOSYNC_RS_PORT=8090
+      - KOSYNC_RS_DATABASE_URL=sqlite://data/kosync.db
+      - KOSYNC_RS_ADMIN_PASSWORD=${KOSYNC_RS_ADMIN_PASSWORD:-admin}
+      - KOSYNC_RS_REGISTRATION_DISABLED=false
+      - KOSYNC_RS_BOOKS_DIR=data/books
+      - KOSYNC_RS_MAX_UPLOAD_BYTES=${KOSYNC_RS_MAX_UPLOAD_BYTES:-209715200}
+      # - KOSYNC_RS_TRUSTED_PROXIES=1.2.3.4
+      # - KOSYNC_RS_SINGLE_LINE_LOGGING=true

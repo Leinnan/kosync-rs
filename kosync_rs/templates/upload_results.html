@@ -1,0 +1,35 @@
+{% import "icons.html" as icons %}
+{% if results %}
+<section class="card" aria-labelledby="results-heading">
+  <h2 id="results-heading" class="card-title">{{ icons::icon(name="check") }}Results</h2>
+  <ul class="result-list">
+    {% for result in results %}
+    <li>
+      {% if result.status == "imported" %}
+        <span class="result-icon success">{{ icons::icon(name="check") }}</span>
+      {% elif result.status == "duplicate" %}
+        <span class="result-icon warning">{{ icons::icon(name="copy") }}</span>
+      {% else %}
+        <span class="result-icon error">{{ icons::icon(name="x") }}</span>
+      {% endif %}
+      <span class="result-text">
+        <strong>{{ result.file_name }}</strong>
+        <small>
+          {% if result.status == "imported" %}Added to the library{% elif result.status == "duplicate" %}Already in the library{% else %}Could not be imported{% endif %}{% if result.message %} · {{ result.message }}{% endif %}
+        </small>
+      </span>
+      {% if result.status == "imported" %}
+        <span class="badge success">{{ result.status }}</span>
+      {% elif result.status == "duplicate" %}
+        <span class="badge warning">{{ result.status }}</span>
+      {% else %}
+        <span class="badge error">{{ result.status }}</span>
+      {% endif %}
+      {% if result.document_hash and result.status != "error" %}
+        <a href="/books/{{ result.document_hash }}" class="history-link">Open</a>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}

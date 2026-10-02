@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+{% import "cards.html" as cards %}
+
+{% block title %}Users{% endblock title %}
+
+{% block content %}
+<div class="page-header">
+  <hgroup>
+    <h1>Users</h1>
+    <p>Create accounts and control who can upload books. Each account has its own reading progress. The book library is shared by everyone.</p>
+  </hgroup>
+  <div class="page-actions">
+    <button type="button" class="with-icon" data-dialog-open="create-user">{{ icons::icon(name="plus") }}New user</button>
+  </div>
+</div>
+
+{{ cards::flash(error=error | default(value=""), notice=notice | default(value="")) }}
+
+<ul class="user-list" aria-label="Accounts">
+  {% for u in users %}
+  <li class="user-row{% if not u.is_active %} inactive{% endif %}">
+    <span class="avatar" aria-hidden="true">{{ u.username | truncate(length=1, end="") | upper }}</span>
+    <div class="user-info">
+      <strong>
+        {{ u.username }}
+        {% if u.is_administrator %}<span class="badge accent">{{ icons::icon(name="shield") }}admin</span>{% endif %}
+      </strong>
+      <small>
+        {{ u.document_count }} document{% if u.document_count != 1 %}s{% endif %}
+        {% if u.last_synced_at %} · last sync <time datetime="{{ u.last_synced_at }}">{{ u.last_synced_at | timeago }}</time>{% else %} · never synced{% endif %}
+      </small>
+    </div>
+    <div class="user-badges">
+      {% if u.is_active %}
+      <span class="badge success">Active</span>
+      {% else %}
+      <span class="badge warning">Inactive</span>
+      {% endif %}
+      {% if u.is_administrator or u.can_upload %}
+      <span class="badge success">{{ icons::icon(name="upload") }}Upload allowed</span>
+      {% else %}
+      <span class="badge error">Upload blocked</span>
+      {% endif %}
+    </div>
+    {% if u.is_administrator %}
+    <span class="protected" title="The built-in admin account is protected">{{ icons::icon(name="shield") }}<span class="visually-hidden">Protected</span></span>
+    {% else %}
+    <details class="menu">
+      <summary aria-label="Actions for {{ u.username }}">{{ icons::icon(name="more") }}</summary>
+      <div class="menu-panel">
+        <form method="post" action="/admin/users/{{ u.username }}/active">
+          <button type="submit" class="menu-item">{{ icons::icon(name="users") }}{% if u.is_active %}Deactivate{% else %}Activate{% endif %}</button>
+        </form>
+        <form method="post" action="/admin/users/{{ u.username }}/can-upload">
+          <button type="submit" class="menu-item">{{ icons::icon(name="upload") }}{% if u.can_upload %}Revoke upload{% else %}Allow upload{% endif %}</button>
+        </form>
+        <hr>
+        <p class="menu-heading">Reset password</p>
+        <form class="menu-form" method="post" action="/admin/users/{{ u.username }}/password">
+          <label class="visually-hidden" for="pw-{{ u.id }}">New password for {{ u.username }}</label>
+          <input id="pw-{{ u.id }}" type="password" name="password" placeholder="New password" required autocomplete="new-password">
+          <button type="submit" class="secondary">Reset</button>
+        </form>
+        <hr>
+        <form method="post" action="/admin/users/{{ u.username }}/delete"
+              data-confirm="{{ u.username }} and all of their reading progress will be permanently removed."
+              data-confirm-title="Delete {{ u.username }}?" data-confirm-label="Delete user">
+          <button type="submit" class="menu-item menu-item-danger">{{ icons::icon(name="trash") }}Delete user…</button>
+        </form>
+      </div>
+    </details>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+
+<dialog id="create-user">
+  <article>
+    <header>
+      <h2>Create account</h2>
+    </header>
+    <form method="post" action="/admin/users/create" id="create-user-form">
+      <label>Username
+        <input type="text" name="username" required autocomplete="off">
+      </label>
+      <label>Password
+        <input type="password" name="password" required autocomplete="new-password">
+      </label>
+      <label>
+        <input type="checkbox" role="switch" name="can_upload" checked>
+        Allow this user to upload books
+      </label>
+    </form>
+    <footer>
+      <button type="button" class="secondary" data-dialog-close>Cancel</button>
+      <button type="submit" form="create-user-form">Create user</button>
+    </footer>
+  </article>
+</dialog>
+
+<noscript>
+  <article class="card">
+    <h2>Create account</h2>
+    <form method="post" action="/admin/users/create">
+      <label>Username <input type="text" name="username" required autocomplete="off"></label>
+      <label>Password <input type="password" name="password" required autocomplete="new-password"></label>
+      <label><input type="checkbox" name="can_upload" checked> Allow this user to upload books</label>
+      <button type="submit">Create user</button>
+    </form>
+  </article>
+</noscript>
+{% endblock content %}

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+{% import "cards.html" as cards %}
+
+{% block title %}Library{% endblock title %}
+
+{% block content %}
+<div class="page-header">
+  <hgroup>
+    <h1>Library</h1>
+    <p>The shared book collection. Everyone sees the same books, and reading progress is kept per account.</p>
+  </hgroup>
+  {% if can_upload %}
+  <div class="page-actions">
+    <a href="/books/upload" role="button" class="with-icon">{{ icons::icon(name="plus") }}Add books</a>
+  </div>
+  {% endif %}
+</div>
+
+<form class="book-filters toolbar" method="get" action="/books"
+      hx-get="/books" hx-target="#book-results" hx-swap="innerHTML"
+      hx-push-url="true" hx-indicator="#book-results"
+      hx-trigger="change, input changed delay:300ms, search">
+  <div class="search-field">
+    {{ icons::icon(name="search") }}
+    <label class="visually-hidden" for="book-query">Search title or author</label>
+    <input id="book-query" type="search" name="query" placeholder="Search title or author"
+           value="{{ query }}" autocomplete="off">
+  </div>
+
+  <label class="select-inline">
+    <span class="visually-hidden">Sort</span>
+    <select name="sort" aria-label="Sort">
+      <option value="title" {% if sort == "title" %}selected{% endif %}>Title A–Z</option>
+      <option value="recent" {% if sort == "recent" %}selected{% endif %}>Recently added</option>
+      <option value="author" {% if sort == "author" %}selected{% endif %}>Author</option>
+      <option value="series" {% if sort == "series" %}selected{% endif %}>Series</option>
+    </select>
+  </label>
+
+  <details class="filter-panel">
+    <summary>
+      {{ icons::icon(name="filter") }}Filters
+      <span class="badge accent filter-count" {% if not advanced_filter_count %}hidden{% endif %}>{{ advanced_filter_count }}</span>
+    </summary>
+    <div class="filter-panel-body">
+      <label>Reading status
+        <select name="status">
+          <option value="" {% if not status %}selected{% endif %}>Any</option>
+          <option value="unread" {% if status == "unread" %}selected{% endif %}>Unread</option>
+          <option value="in-progress" {% if status == "in-progress" %}selected{% endif %}>In progress</option>
+          <option value="finished" {% if status == "finished" %}selected{% endif %}>Finished</option>
+        </select>
+      </label>
+
+      {% if genre_options %}
+      <label>Genre
+        <select name="genre">
+          <option value="">All genres</option>
+          {% for option in genre_options %}
+          <option value="{{ option.name }}" {% if genre == option.name %}selected{% endif %}>{{ option.name }} ({{ option.count }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+
+      {% if author_options %}
+      <label>Author
+        <select name="author">
+          <option value="">All authors</option>
+          {% for option in author_options %}
+          <option value="{{ option.name }}" {% if author == option.name %}selected{% endif %}>{{ option.name }} ({{ option.count }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+
+      {% if series_options %}
+      <label>Series
+        <select name="series">
+          <option value="">All series</option>
+          {% for option in series_options %}
+          <option value="{{ option.name }}" {% if series == option.name %}selected{% endif %}>{{ option.name }} ({{ option.count }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+
+      {% if language_options %}
+      <label>Language
+        <select name="language">
+          <option value="">All languages</option>
+          {% for option in language_options %}
+          <option value="{{ option.name }}" {% if language == option.name %}selected{% endif %}>{{ option.name }} ({{ option.count }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+    </div>
+  </details>
+
+  <fieldset class="segmented">
+    <legend class="visually-hidden">View</legend>
+    <label title="Grid view"><input type="radio" name="view" value="grid" {% if view != "list" %}checked{% endif %} aria-label="Grid view">{{ icons::icon(name="grid") }}</label>
+    <label title="List view"><input type="radio" name="view" value="list" {% if view == "list" %}checked{% endif %} aria-label="List view">{{ icons::icon(name="list") }}</label>
+  </fieldset>
+
+  <noscript><button type="submit" class="secondary">Apply</button></noscript>
+</form>
+
+<div id="book-results" class="results-region" aria-live="polite">
+  {% include "books_grid.html" %}
+</div>
+{% endblock content %}

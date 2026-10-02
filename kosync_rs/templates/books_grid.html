@@ -1,0 +1,49 @@
+{% import "icons.html" as icons %}
+{% import "cards.html" as cards %}
+<div class="result-bar" role="status">
+  <span>{{ total_label }}</span>
+  {% if active_filters %}
+  <ul class="filter-chips">
+    {% for chip in active_filters %}
+    <li class="chip">
+      {{ chip.label }}
+      <a class="chip-remove" href="{{ chip.href }}" aria-label="Remove filter {{ chip.label }}">&times;</a>
+    </li>
+    {% endfor %}
+  </ul>
+  <a class="clear-link" href="{{ clear_url }}">Clear all</a>
+  {% endif %}
+</div>
+
+{% if books %}
+<div class="book-grid{% if view == "list" %} list-view{% endif %}">
+  {% for book in books %}
+  {{ cards::book_card(book=book) }}
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<nav class="pagination" aria-label="Pagination">
+  {% if has_prev %}
+    <a href="/books?page={{ prev_page }}{{ query_suffix }}" hx-get="/books?page={{ prev_page }}{{ query_suffix }}" hx-target="#book-results" hx-push-url="true" role="button" class="secondary">{{ icons::icon(name="chevron-left") }}Previous</a>
+  {% else %}<span class="spacer"></span>{% endif %}
+  <span class="pagination-status">Page {{ page }} of {{ total_pages }}</span>
+  {% if has_next %}
+    <a href="/books?page={{ next_page }}{{ query_suffix }}" hx-get="/books?page={{ next_page }}{{ query_suffix }}" hx-target="#book-results" hx-push-url="true" role="button" class="secondary">Next{{ icons::icon(name="chevron-right") }}</a>
+  {% else %}<span class="spacer"></span>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<div class="empty-state">
+  <span class="empty-icon">{{ icons::icon(name="library") }}</span>
+  {% if active_filters or query %}
+  <h3>No matches</h3>
+  <p>No books match your filters.</p>
+  <a href="{{ clear_url }}" role="button" class="secondary">Clear filters</a>
+  {% else %}
+  <h3>The library is empty</h3>
+  <p>Upload EPUB files to start the shared collection.{% if not can_upload %} Ask an administrator for upload access.{% endif %}</p>
+  {% if can_upload %}<a href="/books/upload" role="button">Upload books</a>{% endif %}
+  {% endif %}
+</div>
+{% endif %}

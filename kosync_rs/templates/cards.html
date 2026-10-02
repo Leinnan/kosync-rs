@@ -1,0 +1,53 @@
+{% import "icons.html" as icons %}
+
+{#- A library book card: cover, reading-state badge, title, author, series. -#}
+{% macro book_card(book, current=false) -%}
+<article class="book-card{% if current %} is-current{% endif %}">
+  <a href="/books/{{ book.document_hash }}" class="cover-link" tabindex="-1" aria-hidden="true">
+    <figure class="cover-container">
+      {% if book.has_thumb %}
+        <img src="/books/{{ book.document_hash }}/thumbnail" alt="" loading="lazy">
+      {% else %}
+        <div class="cloth-cover" style="--hue: {{ book.hue }}"><span>{{ book.title }}</span></div>
+      {% endif %}
+      {% if book.has_progress %}
+        {% if book.percentage >= 0.99 %}
+          <span class="cover-badge finished">{{ icons::icon(name="check") }}Finished</span>
+        {% else %}
+          <span class="cover-badge">{{ book.percentage | pct }}</span>
+          <div class="cover-progress"><span style="width: {{ book.percentage * 100 }}%"></span></div>
+        {% endif %}
+      {% endif %}
+    </figure>
+  </a>
+  <header class="card-header">
+    <h3 class="book-title"><a href="/books/{{ book.document_hash }}">{{ book.title }}</a></h3>
+    {% if book.authors %}<p class="book-author">{{ book.authors }}</p>{% endif %}
+    {% if book.series %}<p class="book-series">{{ book.series }}{% if book.series_index %} #{{ book.series_index }}{% endif %}</p>{% endif %}
+  </header>
+  <div class="list-progress">
+    {% if book.has_progress %}
+      <div class="meter{% if book.percentage >= 0.99 %} finished{% endif %}"><span style="width: {{ book.percentage * 100 }}%"></span></div>
+      <span>{{ book.percentage | pct }}</span>
+    {% else %}
+      <span class="badge">Unread</span>
+    {% endif %}
+  </div>
+</article>
+{%- endmacro book_card %}
+
+{#- Dismissible flash message rendered from `error` / `notice` context values. -#}
+{% macro flash(error="", notice="") -%}
+{% if error %}
+<div class="flash error" role="alert">
+  <p>{{ error }}</p>
+  <button type="button" class="icon-button" data-dismiss aria-label="Dismiss">{{ icons::icon(name="x") }}</button>
+</div>
+{% endif %}
+{% if notice %}
+<div class="flash success" role="status">
+  <p>{{ notice }}</p>
+  <button type="button" class="icon-button" data-dismiss aria-label="Dismiss">{{ icons::icon(name="x") }}</button>
+</div>
+{% endif %}
+{%- endmacro flash %}
