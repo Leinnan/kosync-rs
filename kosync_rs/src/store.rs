@@ -316,6 +316,57 @@ pub(crate) async fn get_progress(
     .map_err(StoreError::from)
 }
 
+/// Fetch the newest stored progress for a document, treating a publication's
+/// binary digest and file-name digest as aliases of the same book.
+///
+/// `KOReader`-compatible readers pick either identifier (binary digest or
+/// `md5(filename)`), so a client using one must still see progress recorded
+/// under the other. When no library publication matches, this is an exact
+/// lookup. The returned record carries the requested `document` identifier.
+///
+/// # Errors
+///
+/// Returns an error if a query fails.
+pub(crate) async fn get_progress_with_aliases(
+    pool: &SqlitePool,
+    user_id: i64,
+    document: &str,
+) -> Result<Option<Document>, StoreError> {
+    let publication = match get_publication_by_hash(pool, document).await? {
+        Some(publication) => Some(publication),
+        None => get_publication_by_file_name_hash(pool, document).await?,
+    };
+
+    let Some(publication) = publication else {
+        return get_progress(pool, user_id, document).await;
+    };
+
+    let name_hash = publication
+        .file_name_hash
+        .as_deref()
+        .unwrap_or(&publication.document_hash);
+
+    let found = sqlx::query_as::<_, Document>(
+        "SELECT document_hash, progress, percentage, device, device_id, timestamp,
+                title, authors, filename
+         FROM documents
+         WHERE user_id = ? AND document_hash IN (?, ?, ?)
+         ORDER BY timestamp DESC, id DESC LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(document)
+    .bind(&publication.document_hash)
+    .bind(name_hash)
+    .fetch_optional(pool)
+    .await
+    .map_err(StoreError::from)?;
+
+    Ok(found.map(|mut doc| {
+        document.clone_into(&mut doc.document_hash);
+        doc
+    }))
+}
+
 /// Fetch a user's sync progress for a document by its metadata file name.
 ///
 /// # Errors
@@ -963,6 +1014,41 @@ pub(crate) async fn get_publication_by_file_name_hash(
         .bind(file_name_hash)
         .fetch_optional(pool)
         .await
+        .map_err(StoreError::from)
+}
+
+/// List every publication's id, digest and stored file path.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn list_publication_files(
+    pool: &SqlitePool,
+) -> Result<Vec<(i64, String, String)>, StoreError> {
+    sqlx::query_as::<_, (i64, String, String)>(
+        "SELECT id, document_hash, file_path FROM publications",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::from)
+}
+
+/// Replace a publication's document digest, leaving its stored files in place.
+///
+/// # Errors
+///
+/// Returns an error if the update fails, for example on a digest collision.
+pub(crate) async fn update_publication_hash(
+    pool: &SqlitePool,
+    id: i64,
+    document_hash: &str,
+) -> Result<(), StoreError> {
+    sqlx::query("UPDATE publications SET document_hash = ? WHERE id = ?")
+        .bind(document_hash)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map(|_| ())
         .map_err(StoreError::from)
 }
 

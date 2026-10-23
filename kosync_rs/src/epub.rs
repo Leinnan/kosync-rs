@@ -44,16 +44,19 @@ pub(crate) struct ParsedEpub {
 /// Compute the `KOReader` partial `MD5` document digest of `data`.
 ///
 /// This replicates [`util.partialMD5`] from the `KOReader` source: a `1024`-byte
-/// sample is read at offsets `256, 1024, 4096, 16384, 65536, 262144, 1048576,
-/// 4194304, 16777216, 67108864, 268435456, 1073741824` (each `4x` the previous),
-/// stopping at the first offset where no bytes are available. The samples are
+/// sample is read at offsets `0, 1024, 4096, 16384, 65536, 262144, 1048576,
+/// 4194304, 16777216, 67108864, 268435456, 1073741824` (each `4x` the previous
+/// after the first), stopping at the first offset where no bytes are available.
+///
+/// `KOReader` computes the first offset as `1024 << -2`; under `LuaJIT`'s 32-bit
+/// shifts the count wraps to `30` and the result is `0`, not `256`. The samples are
 /// concatenated and hashed with `MD5`, yielding a lowercase hex digest.
 ///
 /// [`util.partialMD5`]: https://github.com/koreader/koreader/blob/master/frontend/util.lua
 #[must_use]
 pub(crate) fn partial_md5_bytes(data: &[u8]) -> String {
     let mut hasher = Md5::new();
-    let mut offset: usize = 256; // 1024 << (2 * -1)
+    let mut offset: usize = 0; // LuaJIT wraps `1024 << -2` to 0
 
     for _ in 0..SAMPLE_COUNT {
         if offset >= data.len() {
@@ -61,7 +64,11 @@ pub(crate) fn partial_md5_bytes(data: &[u8]) -> String {
         }
         let end = (offset + SAMPLE_SIZE).min(data.len());
         hasher.update(&data[offset..end]);
-        offset = offset.saturating_mul(4);
+        offset = if offset == 0 {
+            SAMPLE_SIZE
+        } else {
+            offset.saturating_mul(4)
+        };
     }
 
     format!("{:x}", hasher.finalize())
@@ -334,16 +341,19 @@ mod tests {
     }
 
     #[test]
-    fn input_smaller_than_first_offset_yields_md5_of_empty() {
+    fn input_smaller_than_one_sample_hashes_whole_input() {
         let data = vec![0xAB; 200];
-        assert_eq!(partial_md5_bytes(&data), "d41d8cd98f00b204e9800998ecf8427e");
+        let mut hasher = md5::Md5::new();
+        hasher.update(&data);
+        let expected = format!("{:x}", hasher.finalize());
+        assert_eq!(partial_md5_bytes(&data), expected);
     }
 
     #[test]
     fn single_sample_when_data_fits_within_first_window() {
         let data = vec![0x41; 300];
         let mut hasher = md5::Md5::new();
-        hasher.update(&data[256..300]);
+        hasher.update(&data[0..300]);
         let expected = format!("{:x}", hasher.finalize());
         assert_eq!(partial_md5_bytes(&data), expected);
     }
@@ -352,7 +362,7 @@ mod tests {
     fn reads_multiple_samples_with_geometric_offsets() {
         let data = vec![0x42; 2048];
         let mut hasher = md5::Md5::new();
-        hasher.update(&data[256..1280]);
+        hasher.update(&data[0..1024]);
         hasher.update(&data[1024..2048]);
         let expected = format!("{:x}", hasher.finalize());
         assert_eq!(partial_md5_bytes(&data), expected);

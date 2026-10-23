@@ -73,6 +73,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pool = init_db(&config).await?;
     let state = build_state(&config, pool);
 
+    let rehashed = library::rehash_publications(&state).await;
+    if rehashed > 0 {
+        tracing::info!(rehashed, "corrected publication document digests");
+    }
+
     let app = routes::router(state.clone()).layer(axum::middleware::from_fn_with_state(
         state,
         middleware::access_log,

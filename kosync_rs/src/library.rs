@@ -47,6 +47,37 @@ pub(crate) struct ImportOutcome {
     pub(crate) message: Option<String>,
 }
 
+/// Recompute each stored publication's partial `MD5` digest from its file.
+///
+/// Earlier releases sampled from the wrong start offset, so digests never
+/// matched the ones `KOReader`-compatible readers send. Stored file and cover
+/// paths are untouched; only the `document_hash` column changes. Returns the
+/// number of publications updated.
+pub(crate) async fn rehash_publications(state: &AppState) -> usize {
+    let Ok(files) = store::list_publication_files(&state.pool).await else {
+        tracing::warn!("could not list publications for digest check");
+        return 0;
+    };
+
+    let mut updated = 0;
+    for (id, stored, file_path) in files {
+        let Ok(data) = tokio::fs::read(resolve_path(state, &file_path)).await else {
+            continue;
+        };
+        let actual = epub::partial_md5_bytes(&data);
+        if actual == stored {
+            continue;
+        }
+        match store::update_publication_hash(&state.pool, id, &actual).await {
+            Ok(()) => updated += 1,
+            Err(err) => {
+                tracing::warn!(id, error = ?err, "could not update publication digest");
+            }
+        }
+    }
+    updated
+}
+
 /// Resolve a stored file path relative to the books directory.
 pub(crate) fn resolve_path(state: &AppState, relative: &str) -> PathBuf {
     std::path::Path::new(&state.config.books_dir).join(relative)

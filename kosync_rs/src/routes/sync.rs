@@ -107,6 +107,10 @@ async fn update_progress(
         return Err(ApiError::new(ErrorCode::InvalidFields));
     };
 
+    if !percentage.is_finite() || !(0.0..=1.0).contains(&percentage) {
+        return Err(ApiError::new(ErrorCode::InvalidFields));
+    }
+
     let timestamp = now_unix();
     let metadata = payload.metadata.as_ref();
     let input = store::ProgressInput {
@@ -141,7 +145,7 @@ async fn get_progress(
         return Err(ApiError::new(ErrorCode::DocumentMissing));
     }
 
-    let doc = store::get_progress(&state.pool, user.id, &document)
+    let doc = store::get_progress_with_aliases(&state.pool, user.id, &document)
         .await
         .map_err(StoreError::into_api_error)?;
 
