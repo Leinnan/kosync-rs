@@ -193,6 +193,20 @@ struct OpdsPublication {
     context: &'static str,
     metadata: PublicationMetadata,
     links: Vec<OpdsLink>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    images: Vec<ImageLink>,
+}
+
+/// One rendition in a publication's `images` collection.
+#[derive(Debug, Serialize)]
+struct ImageLink {
+    href: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    typ: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    width: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    height: Option<i64>,
 }
 
 /// Feed-level metadata.
@@ -387,6 +401,7 @@ fn publication_view(
     );
 
     OpdsPublication {
+        images: image_collection(base, publication),
         context: PUBLICATION_CONTEXT,
         metadata: PublicationMetadata {
             typ: "http://schema.org/Book",
@@ -441,6 +456,35 @@ fn image_links<'a>(
         links.push((THUMBNAIL_REL, href("cover"), cover_type));
     }
     links
+}
+
+/// A publication's OPDS 2.0 `images` collection: the thumbnail first, then the
+/// full-size cover, each with its pixel size when measured.
+fn image_collection(base: &str, publication: &Publication) -> Vec<ImageLink> {
+    let href = |kind: &str| {
+        format!(
+            "{base}/opds/v2/publications/{}/{kind}",
+            publication.document_hash
+        )
+    };
+    let mut images = Vec::with_capacity(2);
+    if publication.thumb_path.is_some() {
+        images.push(ImageLink {
+            href: href("thumbnail"),
+            typ: publication.thumb_media_type.clone(),
+            width: publication.thumb_width,
+            height: publication.thumb_height,
+        });
+    }
+    if publication.cover_path.is_some() {
+        images.push(ImageLink {
+            href: href("cover"),
+            typ: publication.cover_media_type.clone(),
+            width: publication.cover_width,
+            height: publication.cover_height,
+        });
+    }
+    images
 }
 
 /// Parse the stored authors JSON array into author entries.

@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::state::AppState;
-use crate::store::{self, EnrichmentUpdate};
+use crate::store::{self, CoverImages, EnrichmentUpdate};
 use crate::util::now_unix;
 use crate::{epub, library};
 
@@ -209,10 +209,7 @@ pub(crate) async fn enrich_publication(state: &AppState, document_hash: &str) {
     let mut update = EnrichmentUpdate {
         genres: String::new(),
         isbn: Some(isbn),
-        cover_path: None,
-        cover_media_type: None,
-        thumb_path: None,
-        thumb_media_type: None,
+        images: CoverImages::default(),
         timestamp: now_unix(),
     };
 
@@ -224,12 +221,7 @@ pub(crate) async fn enrich_publication(state: &AppState, document_hash: &str) {
             && let Some(url) = api.cover_url
             && let Some((bytes, mime)) = download_cover(client, &url).await
         {
-            let (cover_path, cover_media_type, thumb_path) =
-                library::store_cover(state, document_hash, &bytes, &mime).await;
-            update.cover_path = cover_path;
-            update.cover_media_type = cover_media_type;
-            update.thumb_media_type = thumb_path.as_ref().map(|_| "image/jpeg".to_owned());
-            update.thumb_path = thumb_path;
+            update.images = library::store_cover(state, document_hash, &bytes, &mime).await;
         }
     }
 

@@ -347,3 +347,84 @@ async fn backfill_restores_missing_covers_and_thumbnails() {
     // Nothing left to do.
     assert_eq!(backfill_covers(&state).await, 0);
 }
+
+/// The `images` collection of the only publication in the OPDS 2.0 feed.
+async fn feed_images(app: &Router) -> serde_json::Value {
+    let json: serde_json::Value =
+        serde_json::from_str(&feed(app, "/opds/v2/publications").await).unwrap();
+    json["publications"][0]["images"].clone()
+}
+
+#[tokio::test]
+async fn opds2_publications_list_images_with_sizes() {
+    let (app, _, _) = app_with_state().await;
+    let hash = upload(&app, &build_epub(Some(&png(600, 900)))).await;
+
+    let images = feed_images(&app).await;
+    let base = format!("http://localhost/opds/v2/publications/{hash}");
+    assert_eq!(
+        images,
+        serde_json::json!([
+            {
+                "href": format!("{base}/thumbnail"),
+                "type": "image/jpeg",
+                "width": 300,
+                "height": 450,
+            },
+            {
+                "href": format!("{base}/cover"),
+                "type": "image/png",
+                "width": 600,
+                "height": 900,
+            },
+        ])
+    );
+
+    // The advertised thumbnail size is the size actually served.
+    let (_, bytes) = thumbnail(&app, &hash).await;
+    let served = image::load_from_memory(&bytes).unwrap();
+    assert_eq!((served.width(), served.height()), (300, 450));
+}
+
+#[tokio::test]
+async fn publications_without_covers_have_no_images() {
+    let (app, _, _) = app_with_state().await;
+    upload(&app, &build_epub(None)).await;
+    let json: serde_json::Value =
+        serde_json::from_str(&feed(&app, "/opds/v2/publications").await).unwrap();
+    assert!(json["publications"][0].get("images").is_none());
+}
+
+#[tokio::test]
+async fn backfill_measures_existing_images_without_regenerating_them() {
+    let (app, state, pool) = app_with_state().await;
+    upload(&app, &build_epub(Some(&png(60, 90)))).await;
+
+    // An import from before sizes were recorded.
+    sqlx::query(
+        "UPDATE publications SET cover_width = NULL, cover_height = NULL,
+                thumb_width = NULL, thumb_height = NULL",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let images = feed_images(&app).await;
+    assert!(images[0].get("width").is_none());
+
+    assert_eq!(backfill_covers(&state).await, 1);
+    let images = feed_images(&app).await;
+    assert_eq!(images[0]["width"], 60);
+    assert_eq!(images[0]["height"], 90);
+    assert_eq!(images[1]["width"], 60);
+
+    assert_eq!(backfill_covers(&state).await, 0);
+}
+
+#[tokio::test]
+async fn backfill_skips_covers_that_cannot_be_measured() {
+    let (app, state, _) = app_with_state().await;
+    upload(&app, &build_epub(Some(b"not really a png"))).await;
+    // No thumbnail and no size can be produced, so nothing is rewritten.
+    assert_eq!(backfill_covers(&state).await, 0);
+    assert_eq!(backfill_covers(&state).await, 0);
+}

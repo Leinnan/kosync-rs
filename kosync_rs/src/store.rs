@@ -937,10 +937,47 @@ pub(crate) struct Publication {
     pub(crate) thumb_path: Option<String>,
     /// MIME type of the cover thumbnail.
     pub(crate) thumb_media_type: Option<String>,
+    /// Cover width in pixels, once measured.
+    pub(crate) cover_width: Option<i64>,
+    /// Cover height in pixels, once measured.
+    pub(crate) cover_height: Option<i64>,
+    /// Thumbnail width in pixels, once measured.
+    pub(crate) thumb_width: Option<i64>,
+    /// Thumbnail height in pixels, once measured.
+    pub(crate) thumb_height: Option<i64>,
     /// Server-assigned creation timestamp (seconds).
     pub(crate) created_at: i64,
     /// Server-assigned last-update timestamp (seconds).
     pub(crate) updated_at: i64,
+}
+
+/// Stored cover image and thumbnail files with their pixel sizes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CoverImages {
+    /// Path of the cover image, relative to the books directory.
+    pub(crate) cover_path: Option<String>,
+    /// MIME type of the cover image.
+    pub(crate) cover_media_type: Option<String>,
+    /// Cover `(width, height)` in pixels, if it could be measured.
+    pub(crate) cover_size: Option<(u32, u32)>,
+    /// Path of the `JPEG` thumbnail, relative to the books directory.
+    pub(crate) thumb_path: Option<String>,
+    /// Thumbnail `(width, height)` in pixels, if it could be measured.
+    pub(crate) thumb_size: Option<(u32, u32)>,
+}
+
+impl CoverImages {
+    /// The thumbnail MIME type: thumbnails are always `JPEG`.
+    fn thumb_media_type(&self) -> Option<&'static str> {
+        self.thumb_path.as_ref().map(|_| "image/jpeg")
+    }
+}
+
+/// Split an optional `(width, height)` into bindable columns.
+fn size_columns(size: Option<(u32, u32)>) -> (Option<i64>, Option<i64>) {
+    size.map_or((None, None), |(width, height)| {
+        (Some(i64::from(width)), Some(i64::from(height)))
+    })
 }
 
 /// Validated input for inserting a publication.
@@ -978,14 +1015,8 @@ pub(crate) struct PublicationInput<'a> {
     pub(crate) file_path: &'a str,
     /// Size of the `EPUB` file in bytes.
     pub(crate) file_size: i64,
-    /// Path of the cover image, relative to the books directory.
-    pub(crate) cover_path: Option<&'a str>,
-    /// MIME type of the cover image.
-    pub(crate) cover_media_type: Option<&'a str>,
-    /// Path of the cover thumbnail, relative to the books directory.
-    pub(crate) thumb_path: Option<&'a str>,
-    /// MIME type of the cover thumbnail.
-    pub(crate) thumb_media_type: Option<&'a str>,
+    /// Stored cover and thumbnail files.
+    pub(crate) images: &'a CoverImages,
     /// Server-assigned timestamp (seconds).
     pub(crate) timestamp: i64,
 }
@@ -996,6 +1027,7 @@ macro_rules! publication_query {
             "SELECT publications.id AS id, document_hash, file_name_hash, file_name, title, authors, language, ",
             "identifier, publisher, published, description, genres, isbn, series, series_index, ",
             "file_path, file_size, cover_path, cover_media_type, thumb_path, thumb_media_type, ",
+            "cover_width, cover_height, thumb_width, thumb_height, ",
             "created_at, updated_at FROM publications ",
             $tail
         )
@@ -1019,13 +1051,16 @@ pub(crate) async fn insert_publication(
         return Err(StoreError::Exists);
     }
 
+    let images = input.images;
+    let (cover_width, cover_height) = size_columns(images.cover_size);
+    let (thumb_width, thumb_height) = size_columns(images.thumb_size);
     let result = sqlx::query(
         "INSERT INTO publications
          (document_hash, file_name_hash, file_name, title, authors, language,
           identifier, publisher, published, description, genres, isbn, series, series_index,
           file_path, file_size, cover_path, cover_media_type, thumb_path, thumb_media_type,
-          created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          cover_width, cover_height, thumb_width, thumb_height, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(input.document_hash)
     .bind(input.file_name_hash)
@@ -1043,10 +1078,14 @@ pub(crate) async fn insert_publication(
     .bind(input.series_index)
     .bind(input.file_path)
     .bind(input.file_size)
-    .bind(input.cover_path)
-    .bind(input.cover_media_type)
-    .bind(input.thumb_path)
-    .bind(input.thumb_media_type)
+    .bind(images.cover_path.as_deref())
+    .bind(images.cover_media_type.as_deref())
+    .bind(images.thumb_path.as_deref())
+    .bind(images.thumb_media_type())
+    .bind(cover_width)
+    .bind(cover_height)
+    .bind(thumb_width)
+    .bind(thumb_height)
     .bind(input.timestamp)
     .bind(input.timestamp)
     .execute(pool)
@@ -1117,9 +1156,15 @@ pub(crate) struct MissingImages {
     pub(crate) cover_path: Option<String>,
     /// MIME type of the stored cover image.
     pub(crate) cover_media_type: Option<String>,
+    /// Path of the thumbnail, if one is stored.
+    pub(crate) thumb_path: Option<String>,
+    /// Stored cover width, if measured.
+    pub(crate) cover_width: Option<i64>,
+    /// Stored thumbnail width, if measured.
+    pub(crate) thumb_width: Option<i64>,
 }
 
-/// List publications missing a cover image or a cover thumbnail.
+/// List publications missing a cover image, a thumbnail, or their pixel sizes.
 ///
 /// # Errors
 ///
@@ -1128,15 +1173,18 @@ pub(crate) async fn list_publications_missing_images(
     pool: &SqlitePool,
 ) -> Result<Vec<MissingImages>, StoreError> {
     sqlx::query_as::<_, MissingImages>(
-        "SELECT id, document_hash, file_path, cover_path, cover_media_type FROM publications
-         WHERE cover_path IS NULL OR thumb_path IS NULL",
+        "SELECT id, document_hash, file_path, cover_path, cover_media_type, thumb_path,
+                cover_width, thumb_width
+         FROM publications
+         WHERE cover_path IS NULL OR thumb_path IS NULL
+            OR cover_width IS NULL OR thumb_width IS NULL",
     )
     .fetch_all(pool)
     .await
     .map_err(StoreError::from)
 }
 
-/// Record a publication's cover image and thumbnail files.
+/// Record a publication's cover image and thumbnail files and their sizes.
 ///
 /// # Errors
 ///
@@ -1144,19 +1192,25 @@ pub(crate) async fn list_publications_missing_images(
 pub(crate) async fn update_publication_images(
     pool: &SqlitePool,
     id: i64,
-    cover: (&str, &str),
-    thumb_path: Option<&str>,
+    images: &CoverImages,
     timestamp: i64,
 ) -> Result<(), StoreError> {
+    let (cover_width, cover_height) = size_columns(images.cover_size);
+    let (thumb_width, thumb_height) = size_columns(images.thumb_size);
     sqlx::query(
         "UPDATE publications SET cover_path = ?, cover_media_type = ?, thumb_path = ?,
-                thumb_media_type = ?, updated_at = ?
+                thumb_media_type = ?, cover_width = ?, cover_height = ?, thumb_width = ?,
+                thumb_height = ?, updated_at = ?
          WHERE id = ?",
     )
-    .bind(cover.0)
-    .bind(cover.1)
-    .bind(thumb_path)
-    .bind(thumb_path.map(|_| "image/jpeg"))
+    .bind(images.cover_path.as_deref())
+    .bind(images.cover_media_type.as_deref())
+    .bind(images.thumb_path.as_deref())
+    .bind(images.thumb_media_type())
+    .bind(cover_width)
+    .bind(cover_height)
+    .bind(thumb_width)
+    .bind(thumb_height)
     .bind(timestamp)
     .bind(id)
     .execute(pool)
@@ -1659,14 +1713,8 @@ pub(crate) struct EnrichmentUpdate {
     pub(crate) genres: String,
     /// Normalized ISBN, if one was found.
     pub(crate) isbn: Option<String>,
-    /// Path of a downloaded cover image, relative to the books directory.
-    pub(crate) cover_path: Option<String>,
-    /// MIME type of the downloaded cover image.
-    pub(crate) cover_media_type: Option<String>,
-    /// Path of the cover thumbnail, relative to the books directory.
-    pub(crate) thumb_path: Option<String>,
-    /// MIME type of the cover thumbnail.
-    pub(crate) thumb_media_type: Option<String>,
+    /// A downloaded cover and its thumbnail, when one was stored.
+    pub(crate) images: CoverImages,
     /// Server-assigned update timestamp (seconds).
     pub(crate) timestamp: i64,
 }
@@ -1674,7 +1722,7 @@ pub(crate) struct EnrichmentUpdate {
 /// Apply the result of a background metadata enrichment to a publication.
 ///
 /// Genres and ISBN are always written (the caller merges embedded and
-/// external values); cover columns are only touched when `cover_path` is set,
+/// external values); image columns are only touched when a cover was stored,
 /// so an existing embedded cover is never overwritten.
 ///
 /// # Errors
@@ -1685,18 +1733,26 @@ pub(crate) async fn update_publication_enrichment(
     document_hash: &str,
     update: &EnrichmentUpdate,
 ) -> Result<bool, StoreError> {
-    let result = if update.cover_path.is_some() {
+    let images = &update.images;
+    let result = if images.cover_path.is_some() {
+        let (cover_width, cover_height) = size_columns(images.cover_size);
+        let (thumb_width, thumb_height) = size_columns(images.thumb_size);
         sqlx::query(
             "UPDATE publications SET genres = ?, isbn = ?, cover_path = ?, cover_media_type = ?,
-                    thumb_path = ?, thumb_media_type = ?, updated_at = ?
+                    thumb_path = ?, thumb_media_type = ?, cover_width = ?, cover_height = ?,
+                    thumb_width = ?, thumb_height = ?, updated_at = ?
              WHERE document_hash = ?",
         )
         .bind(&update.genres)
         .bind(update.isbn.as_deref())
-        .bind(update.cover_path.as_deref())
-        .bind(update.cover_media_type.as_deref())
-        .bind(update.thumb_path.as_deref())
-        .bind(update.thumb_media_type.as_deref())
+        .bind(images.cover_path.as_deref())
+        .bind(images.cover_media_type.as_deref())
+        .bind(images.thumb_path.as_deref())
+        .bind(images.thumb_media_type())
+        .bind(cover_width)
+        .bind(cover_height)
+        .bind(thumb_width)
+        .bind(thumb_height)
         .bind(update.timestamp)
         .bind(document_hash)
         .execute(pool)

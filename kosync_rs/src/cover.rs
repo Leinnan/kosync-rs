@@ -18,6 +18,16 @@ const MAX_SOURCE_EDGE: u32 = 10_000;
 /// Most bytes the decoder may allocate for one picture.
 const MAX_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
 
+/// Read an image's pixel size from its header, without decoding it.
+pub(crate) fn dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+        .filter(|&(width, height)| width > 0 && height > 0)
+}
+
 /// Generate a `JPEG` thumbnail from raw image bytes.
 ///
 /// The picture is shrunk to fit the thumbnail box, preserving aspect ratio;
@@ -67,7 +77,7 @@ mod tests {
 
     use image::{GenericImageView, ImageFormat, Rgba, RgbaImage};
 
-    use super::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH, thumbnail};
+    use super::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH, dimensions, thumbnail};
 
     fn png(img: &RgbaImage) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -104,6 +114,17 @@ mod tests {
     fn oversized_pictures_are_rejected() {
         let huge = png(&RgbaImage::new(super::MAX_SOURCE_EDGE + 1, 1));
         assert!(thumbnail(&huge).is_err());
+    }
+
+    #[test]
+    fn dimensions_come_from_the_header() {
+        assert_eq!(dimensions(&png(&RgbaImage::new(30, 45))), Some((30, 45)));
+        let thumb = thumbnail(&png(&RgbaImage::new(600, 900))).unwrap();
+        assert_eq!(
+            dimensions(&thumb),
+            Some((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
+        );
+        assert_eq!(dimensions(b"not an image"), None);
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::{
     db::md5_hex,
     epub, metadata,
     state::AppState,
-    store::{self, PublicationInput, StoreError},
+    store::{self, CoverImages, PublicationInput, StoreError},
     util::now_unix,
 };
 
@@ -99,42 +99,61 @@ pub(crate) async fn backfill_covers(state: &AppState) -> usize {
 
     let mut updated = 0;
     for row in rows {
-        let (cover_path, cover_media_type, thumb_path) =
-            if let (Some(path), Some(mime)) = (row.cover_path, row.cover_media_type) {
-                let Ok(bytes) = tokio::fs::read(resolve_path(state, &path)).await else {
-                    continue;
-                };
-                let Some(thumb) = store_thumbnail(state, &row.document_hash, bytes).await else {
-                    // Nothing new to record; the failure is already logged.
-                    continue;
-                };
-                (path, mime, Some(thumb))
-            } else {
-                let Some((bytes, mime)) = embedded_cover(state, &row.file_path).await else {
-                    continue;
-                };
-                let (Some(path), Some(mime), thumb) =
-                    store_cover(state, &row.document_hash, &bytes, &mime).await
-                else {
-                    continue;
-                };
-                (path, mime, thumb)
-            };
+        let Some(images) = backfill_images(state, &row).await else {
+            continue;
+        };
+        let unchanged = row.thumb_path == images.thumb_path
+            && row.cover_width.is_some() == images.cover_size.is_some()
+            && row.thumb_width.is_some() == images.thumb_size.is_some();
+        if row.cover_path.is_some() && unchanged {
+            // Nothing new could be produced; failures are already logged.
+            continue;
+        }
 
-        match store::update_publication_images(
-            &state.pool,
-            row.id,
-            (&cover_path, &cover_media_type),
-            thumb_path.as_deref(),
-            now_unix(),
-        )
-        .await
-        {
+        match store::update_publication_images(&state.pool, row.id, &images, now_unix()).await {
             Ok(()) => updated += 1,
             Err(err) => tracing::warn!(id = row.id, error = ?err, "could not record cover images"),
         }
     }
     updated
+}
+
+/// Work out the cover images a backfill should record for one publication.
+///
+/// A stored cover is measured and keeps its thumbnail when one exists (which
+/// is measured too); a missing thumbnail is regenerated. Without a stored
+/// cover, the `EPUB` is searched for one. Returns `None` when nothing can be
+/// recorded.
+async fn backfill_images(state: &AppState, row: &store::MissingImages) -> Option<CoverImages> {
+    let (Some(cover_path), Some(mime)) = (&row.cover_path, &row.cover_media_type) else {
+        let (bytes, mime) = embedded_cover(state, &row.file_path).await?;
+        let images = store_cover(state, &row.document_hash, &bytes, &mime).await;
+        return images.cover_path.is_some().then_some(images);
+    };
+
+    let bytes = tokio::fs::read(resolve_path(state, cover_path))
+        .await
+        .ok()?;
+    let cover_size = cover::dimensions(&bytes);
+    let stored_thumb = match &row.thumb_path {
+        Some(path) => tokio::fs::read(resolve_path(state, path))
+            .await
+            .ok()
+            .map(|thumb| (path.clone(), cover::dimensions(&thumb))),
+        None => None,
+    };
+    let thumb = match stored_thumb {
+        Some(thumb) => Some(thumb),
+        None => store_thumbnail(state, &row.document_hash, bytes).await,
+    };
+    let (thumb_path, thumb_size) = thumb.unzip();
+    Some(CoverImages {
+        cover_path: Some(cover_path.clone()),
+        cover_media_type: Some(mime.clone()),
+        cover_size,
+        thumb_path,
+        thumb_size: thumb_size.flatten(),
+    })
 }
 
 /// Extract the cover picture from a stored `EPUB`, off the async runtime.
@@ -240,12 +259,11 @@ pub(crate) async fn import_file(
         };
     }
 
-    let (cover_path, cover_media_type, thumb_path) =
-        if let Some((bytes, mime)) = parsed.cover.as_ref() {
-            store_cover(state, &document_hash, bytes, mime).await
-        } else {
-            (None, None, None)
-        };
+    let images = if let Some((bytes, mime)) = parsed.cover.as_ref() {
+        store_cover(state, &document_hash, bytes, mime).await
+    } else {
+        CoverImages::default()
+    };
 
     let title = parsed
         .title
@@ -276,10 +294,7 @@ pub(crate) async fn import_file(
         series_index: parsed.series_index,
         file_path: &epub_path,
         file_size: i64::try_from(data.len()).unwrap_or(i64::MAX),
-        cover_path: cover_path.as_deref(),
-        cover_media_type: cover_media_type.as_deref(),
-        thumb_path: thumb_path.as_deref(),
-        thumb_media_type: thumb_path.as_ref().map(|_| "image/jpeg"),
+        images: &images,
         timestamp,
     };
 
@@ -303,12 +318,7 @@ pub(crate) async fn import_file(
         }
         Err(StoreError::Exists) => {
             remove_file(state, &epub_path).await;
-            if let Some(path) = cover_path.as_deref() {
-                remove_file(state, path).await;
-            }
-            if let Some(path) = thumb_path.as_deref() {
-                remove_file(state, path).await;
-            }
+            remove_images(state, &images).await;
             ImportOutcome {
                 file_name,
                 status: ImportStatus::Duplicate,
@@ -319,12 +329,7 @@ pub(crate) async fn import_file(
         Err(err) => {
             err.log();
             remove_file(state, &epub_path).await;
-            if let Some(path) = cover_path.as_deref() {
-                remove_file(state, path).await;
-            }
-            if let Some(path) = thumb_path.as_deref() {
-                remove_file(state, path).await;
-            }
+            remove_images(state, &images).await;
             ImportOutcome {
                 file_name,
                 status: ImportStatus::Error,
@@ -332,6 +337,16 @@ pub(crate) async fn import_file(
                 message: Some("Failed to save publication".to_owned()),
             }
         }
+    }
+}
+
+/// Remove stored cover and thumbnail files, ignoring failures.
+async fn remove_images(state: &AppState, images: &CoverImages) {
+    for path in [&images.cover_path, &images.thumb_path]
+        .into_iter()
+        .flatten()
+    {
+        remove_file(state, path).await;
     }
 }
 
@@ -421,26 +436,37 @@ pub(crate) async fn image_response(
         .into_response())
 }
 
-/// Persist a cover image and generate its thumbnail.
+/// Persist a cover image and generate its thumbnail, measuring both.
+///
+/// Returns empty [`CoverImages`] if the cover could not be written.
 pub(crate) async fn store_cover(
     state: &AppState,
     document_hash: &str,
     bytes: &[u8],
     mime: &str,
-) -> (Option<String>, Option<String>, Option<String>) {
+) -> CoverImages {
     let extension = extension_for_mime(mime);
     let cover_path = format!("{document_hash}.cover.{extension}");
 
     if let Err(err) = tokio::fs::write(resolve_path(state, &cover_path), bytes).await {
         tracing::error!(error = %err, "failed to write cover image");
-        return (None, None, None);
+        return CoverImages::default();
     }
 
-    let thumb_path = store_thumbnail(state, document_hash, bytes.to_vec()).await;
-    (Some(cover_path), Some(mime.to_owned()), thumb_path)
+    let (thumb_path, thumb_size) = store_thumbnail(state, document_hash, bytes.to_vec())
+        .await
+        .unzip();
+    CoverImages {
+        cover_path: Some(cover_path),
+        cover_media_type: Some(mime.to_owned()),
+        cover_size: cover::dimensions(bytes),
+        thumb_path,
+        thumb_size: thumb_size.flatten(),
+    }
 }
 
-/// Generate and persist a cover thumbnail, returning its relative path.
+/// Generate and persist a cover thumbnail, returning its relative path and
+/// pixel size.
 ///
 /// Decoding and resizing run on the blocking thread pool so a large cover does
 /// not stall the async runtime.
@@ -448,7 +474,7 @@ pub(crate) async fn store_thumbnail(
     state: &AppState,
     document_hash: &str,
     cover: Vec<u8>,
-) -> Option<String> {
+) -> Option<(String, Option<(u32, u32)>)> {
     let thumbnail = match tokio::task::spawn_blocking(move || cover::thumbnail(&cover)).await {
         Ok(Ok(thumbnail)) => thumbnail,
         Ok(Err(err)) => {
@@ -462,8 +488,9 @@ pub(crate) async fn store_thumbnail(
     };
 
     let path = format!("{document_hash}.thumb.jpg");
+    let size = cover::dimensions(&thumbnail);
     match tokio::fs::write(resolve_path(state, &path), thumbnail).await {
-        Ok(()) => Some(path),
+        Ok(()) => Some((path, size)),
         Err(err) => {
             tracing::error!(error = %err, "failed to write cover thumbnail");
             None

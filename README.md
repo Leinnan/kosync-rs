@@ -203,7 +203,8 @@ Covers are found the way reading systems do: the declared `cover-image`, then
 the guide's cover page, then the first page of the book. A cover page resolves
 to the first raster picture it shows, including Calibre's `<svg><image>` wrapper.
 Each cover gets a `JPEG` thumbnail that fits 300×450 pixels, with transparent
-areas drawn on white. Feeds link thumbnails as `http://opds-spec.org/image/thumbnail`.
+areas drawn on white. OPDS 2.0 publications also list the thumbnail and
+the full cover in their `images` collection, with `width` and `height` in pixels. Feeds link thumbnails as `http://opds-spec.org/image/thumbnail`.
 Atom feeds also add the `x-stanza-cover-image*` relations. When a cover could not
 be turned into a thumbnail, the feed offers the cover itself as the thumbnail.
 Cover and thumbnail responses carry an `ETag` and answer `If-None-Match` with
