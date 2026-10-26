@@ -1,42 +1,113 @@
-//! Cover image processing: decoding and thumbnail generation.
+//! Cover image processing: bounded decoding and thumbnail generation.
 
 use std::error::Error;
 use std::io::Cursor;
 
+use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::{GenericImageView, ImageFormat, ImageReader};
+use image::{ImageReader, Limits, RgbImage};
 
-/// Maximum dimension, in pixels, of a generated cover thumbnail.
-const THUMBNAIL_MAX: u32 = 300;
+/// Thumbnails fit this box, which keeps them sharp in e-reader grid views.
+const THUMBNAIL_WIDTH: u32 = 300;
+/// Height of the thumbnail box.
+const THUMBNAIL_HEIGHT: u32 = 450;
+/// `JPEG` quality of generated thumbnails.
+const THUMBNAIL_QUALITY: u8 = 85;
+/// Longest accepted source edge, in pixels; larger pictures are rejected.
+const MAX_SOURCE_EDGE: u32 = 10_000;
+/// Most bytes the decoder may allocate for one picture.
+const MAX_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
 
-/// Generate a `JPEG` thumbnail from raw image bytes, preserving aspect ratio.
+/// Generate a `JPEG` thumbnail from raw image bytes.
 ///
-/// The longest edge is scaled to [`THUMBNAIL_MAX`] pixels.
+/// The picture is shrunk to fit the thumbnail box, preserving aspect ratio;
+/// smaller pictures keep their size. Transparent areas are drawn on white,
+/// since `JPEG` has no alpha channel. Decoding is bounded so oversized or
+/// malicious images fail instead of exhausting memory.
 ///
 /// # Errors
 ///
-/// Returns an error if the image cannot be decoded or the thumbnail cannot be
-/// encoded.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss
-)]
+/// Returns an error if the image cannot be decoded, exceeds the decoding
+/// limits, or the thumbnail cannot be encoded.
 pub(crate) fn thumbnail(data: &[u8]) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
-    let img = ImageReader::new(Cursor::new(data))
-        .with_guessed_format()?
-        .decode()?;
+    let mut reader = ImageReader::new(Cursor::new(data)).with_guessed_format()?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_SOURCE_EDGE);
+    limits.max_image_height = Some(MAX_SOURCE_EDGE);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC);
+    reader.limits(limits);
+    let img = reader.decode()?;
 
-    let (width, height) = img.dimensions();
-    let longest = width.max(height);
-    let scale = f64::from(THUMBNAIL_MAX) / f64::from(longest);
-    let new_width = ((f64::from(width) * scale).round().max(1.0)) as u32;
-    let new_height = ((f64::from(height) * scale).round().max(1.0)) as u32;
+    let img = if img.width() > THUMBNAIL_WIDTH || img.height() > THUMBNAIL_HEIGHT {
+        img.resize(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, FilterType::Triangle)
+    } else {
+        img
+    };
 
-    let resized = img.resize(new_width, new_height, FilterType::Triangle);
+    let rgba = img.to_rgba8();
+    let mut rgb = RgbImage::new(rgba.width(), rgba.height());
+    for (out, pixel) in rgb.pixels_mut().zip(rgba.pixels()) {
+        let alpha = u16::from(pixel[3]);
+        for channel in 0..3 {
+            let blended = (u16::from(pixel[channel]) * alpha + 255 * (255 - alpha)) / 255;
+            out[channel] = u8::try_from(blended).unwrap_or(u8::MAX);
+        }
+    }
 
     let mut buffer = Vec::new();
-    resized.write_to(&mut Cursor::new(&mut buffer), ImageFormat::Jpeg)?;
-
+    JpegEncoder::new_with_quality(&mut buffer, THUMBNAIL_QUALITY).encode_image(&rgb)?;
     Ok(buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
+
+    use image::{GenericImageView, ImageFormat, Rgba, RgbaImage};
+
+    use super::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH, thumbnail};
+
+    fn png(img: &RgbaImage) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        img.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+            .unwrap();
+        bytes
+    }
+
+    #[test]
+    fn transparent_pixels_become_white() {
+        let source = png(&RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 0])));
+        let thumb = image::load_from_memory(&thumbnail(&source).unwrap()).unwrap();
+        let pixel = thumb.get_pixel(0, 0);
+        assert!(
+            pixel[0] > 240 && pixel[1] > 240 && pixel[2] > 240,
+            "{pixel:?}"
+        );
+    }
+
+    #[test]
+    fn large_pictures_fit_the_box_and_small_ones_keep_their_size() {
+        let big = png(&RgbaImage::from_pixel(1200, 1600, Rgba([10, 20, 30, 255])));
+        let thumb = image::load_from_memory(&thumbnail(&big).unwrap()).unwrap();
+        assert!(thumb.width() <= THUMBNAIL_WIDTH && thumb.height() <= THUMBNAIL_HEIGHT);
+        // 3:4 is wider than the 2:3 box, so the width is the limiting edge.
+        assert_eq!(thumb.dimensions(), (THUMBNAIL_WIDTH, 400));
+
+        let small = png(&RgbaImage::from_pixel(20, 30, Rgba([10, 20, 30, 255])));
+        let thumb = image::load_from_memory(&thumbnail(&small).unwrap()).unwrap();
+        assert_eq!(thumb.dimensions(), (20, 30));
+    }
+
+    #[test]
+    fn oversized_pictures_are_rejected() {
+        let huge = png(&RgbaImage::new(super::MAX_SOURCE_EDGE + 1, 1));
+        assert!(thumbnail(&huge).is_err());
+    }
+
+    #[test]
+    fn non_images_are_rejected() {
+        assert!(thumbnail(b"not an image").is_err());
+    }
 }

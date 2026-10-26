@@ -7,6 +7,11 @@ use std::io::{Read, Seek};
 use epub::doc::EpubDoc;
 use md5::{Digest, Md5};
 
+mod package;
+mod preflight;
+
+pub(crate) use preflight::{PreflightError, preflight};
+
 /// Size, in bytes, of each sample read by the partial digest.
 const SAMPLE_SIZE: usize = 1024;
 /// Number of samples read by the partial digest (`i = -1 ..= 10`).
@@ -186,10 +191,16 @@ pub(crate) fn parse<R: Read + Seek>(reader: R) -> Result<ParsedEpub, Box<dyn Err
         .filter(|item| item.property == "identifier")
         .find_map(|item| normalize_isbn(&item.value));
 
-    let series = meta(&doc, "calibre:series").or_else(|| meta(&doc, "belongs-to-collection"));
-    let series_index = meta(&doc, "calibre:series_index").and_then(|raw| parse_series_index(&raw));
+    let package = package::read_package(&mut doc);
 
-    let cover = doc.get_cover();
+    let series = meta(&doc, "calibre:series")
+        .or_else(|| meta(&doc, "belongs-to-collection"))
+        .or_else(|| package.series.clone());
+    let series_index = meta(&doc, "calibre:series_index")
+        .or_else(|| package.series_index.clone())
+        .and_then(|raw| parse_series_index(&raw));
+
+    let cover = package::find_cover(&mut doc, &package);
 
     Ok(ParsedEpub {
         title: doc.get_title(),

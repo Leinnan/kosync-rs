@@ -45,6 +45,12 @@ pub struct Config {
     /// Disabled by default: enabling it means the server makes outbound
     /// requests revealing the ISBNs of uploaded books.
     pub metadata_enrichment: bool,
+
+    /// Public base URL (e.g. `https://books.example.com`) used for absolute
+    /// links in OPDS feeds. When unset, links are built from the request's
+    /// `Host` header, and from `X-Forwarded-Proto`/`X-Forwarded-Host` when
+    /// the request comes through a trusted proxy.
+    pub public_url: Option<String>,
 }
 
 /// A configuration error that never includes configured secret values.
@@ -72,6 +78,7 @@ impl Default for Config {
             books_dir: "data/books".to_owned(),
             max_upload_bytes: 209_715_200,
             metadata_enrichment: false,
+            public_url: None,
         }
     }
 }
@@ -122,6 +129,7 @@ impl Config {
                 "KOSYNC_RS_METADATA_ENRICHMENT",
                 &value("KOSYNC_RS_METADATA_ENRICHMENT", "false"),
             )?,
+            public_url: parse_public_url(&value("KOSYNC_RS_PUBLIC_URL", ""))?,
         })
     }
 
@@ -136,6 +144,26 @@ impl Config {
     }
 }
 
+/// Normalize the optional public base URL: empty means unset, and a value must
+/// be an absolute `http` or `https` URL. A trailing slash is removed.
+fn parse_public_url(value: &str) -> Result<Option<String>, ConfigError> {
+    let value = value.trim().trim_end_matches('/');
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let rest = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"));
+    match rest {
+        Some(host) if !host.is_empty() && !host.contains(char::is_whitespace) => {
+            Ok(Some(value.to_owned()))
+        }
+        _ => Err(ConfigError(
+            "KOSYNC_RS_PUBLIC_URL must be an absolute http(s) URL".into(),
+        )),
+    }
+}
+
 /// Parse a setting, naming only the variable in any error message.
 fn parse<T: FromStr>(name: &str, value: &str) -> Result<T, ConfigError> {
     value
@@ -147,7 +175,20 @@ fn parse<T: FromStr>(name: &str, value: &str) -> Result<T, ConfigError> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::parse;
+    use super::{parse, parse_public_url};
+
+    #[test]
+    fn public_url_is_optional_and_normalized() {
+        assert_eq!(parse_public_url("").unwrap(), None);
+        assert_eq!(
+            parse_public_url("https://books.example.com/")
+                .unwrap()
+                .as_deref(),
+            Some("https://books.example.com")
+        );
+        assert!(parse_public_url("books.example.com").is_err());
+        assert!(parse_public_url("https://").is_err());
+    }
 
     #[test]
     fn parse_reports_invalid_values_by_name() {

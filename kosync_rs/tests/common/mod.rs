@@ -302,3 +302,43 @@ pub async fn send_bytes(
         .to_vec();
     (status, headers, bytes)
 }
+
+/// Build an `EPUB` archive from raw `(path, contents)` entries. The
+/// `mimetype` and `META-INF/container.xml` entries are added, pointing at
+/// `opf_path`.
+pub fn build_raw_epub(opf_path: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    zip.start_file("mimetype", options).unwrap();
+    zip.write_all(b"application/epub+zip").unwrap();
+    let container = format!(
+        r#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="{opf_path}" media-type="application/oebps-package+xml"/></rootfiles>
+</container>"#
+    );
+    zip.start_file("META-INF/container.xml", options).unwrap();
+    zip.write_all(container.as_bytes()).unwrap();
+
+    for (path, contents) in files {
+        zip.start_file(*path, options).unwrap();
+        zip.write_all(contents).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+/// Encode a solid-colour `PNG` of the given size.
+pub fn png(width: u32, height: u32) -> Vec<u8> {
+    let img = image::RgbaImage::from_pixel(width, height, image::Rgba([200, 30, 30, 255]));
+    let mut bytes = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )
+    .unwrap();
+    bytes
+}

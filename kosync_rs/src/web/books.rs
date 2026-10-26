@@ -320,10 +320,7 @@ pub(super) async fn list(
         .await
         .unwrap_or_default();
 
-    let mut books = Vec::with_capacity(publications.len());
-    for publication in &publications {
-        books.push(card_view(&state, user.id, publication).await);
-    }
+    let books = card_views(&state, user.id, &publications).await;
 
     let mut ctx = base_context(&user, "books");
     ctx.insert("books", &books);
@@ -370,15 +367,28 @@ pub(super) async fn list(
     }
 }
 
-/// Build a listing card for a publication, including the user's progress.
-async fn card_view(
+/// Build listing cards for publications, including the user's progress,
+/// fetched in a single query.
+async fn card_views(
     state: &AppState,
     user_id: i64,
-    publication: &store::Publication,
-) -> BookCardView {
-    let progress = store::get_progress_for_publication(&state.pool, user_id, publication)
+    publications: &[store::Publication],
+) -> Vec<BookCardView> {
+    let progress = store::get_progress_for_publications(&state.pool, user_id, publications)
         .await
-        .unwrap_or(None);
+        .unwrap_or_else(|err| {
+            err.log();
+            vec![None; publications.len()]
+        });
+    publications
+        .iter()
+        .zip(progress)
+        .map(|(publication, progress)| card_view(publication, progress.as_ref()))
+        .collect()
+}
+
+/// Build a listing card for a publication and the user's progress on it.
+fn card_view(publication: &store::Publication, progress: Option<&store::Document>) -> BookCardView {
     BookCardView {
         document_hash: publication.document_hash.clone(),
         title: publication.title.clone(),
@@ -388,10 +398,8 @@ async fn card_view(
         has_thumb: publication.thumb_path.is_some(),
         hue: cover_hue(&publication.title),
         has_progress: progress.is_some(),
-        percentage: progress.as_ref().map_or(0.0, |doc| doc.percentage),
-        percent: progress
-            .as_ref()
-            .map_or_else(String::new, |doc| format!("{:.2}%", doc.percentage * 100.0)),
+        percentage: progress.map_or(0.0, |doc| doc.percentage),
+        percent: progress.map_or_else(String::new, |doc| format!("{:.2}%", doc.percentage * 100.0)),
     }
 }
 
@@ -488,9 +496,7 @@ pub(super) async fn detail(
             .unwrap_or_default();
         // A series of one is just this book: skip the rail.
         if siblings.len() > 1 {
-            for sibling in &siblings {
-                series_books.push(card_view(&state, user.id, sibling).await);
-            }
+            series_books = card_views(&state, user.id, &siblings).await;
         }
     }
 
@@ -505,24 +511,27 @@ pub(super) async fn detail(
 pub(super) async fn cover(
     State(state): State<AppState>,
     cookies: Cookies,
+    headers: HeaderMap,
     Path(document_hash): Path<String>,
 ) -> Response {
-    serve_image(&state, &cookies, &document_hash, false).await
+    serve_image(&state, &cookies, &headers, &document_hash, false).await
 }
 
 /// Serve the generated cover thumbnail.
 pub(super) async fn thumbnail(
     State(state): State<AppState>,
     cookies: Cookies,
+    headers: HeaderMap,
     Path(document_hash): Path<String>,
 ) -> Response {
-    serve_image(&state, &cookies, &document_hash, true).await
+    serve_image(&state, &cookies, &headers, &document_hash, true).await
 }
 
 /// Serve the cover or thumbnail for a publication.
 async fn serve_image(
     state: &AppState,
     cookies: &Cookies,
+    headers: &HeaderMap,
     document_hash: &str,
     thumbnail: bool,
 ) -> Response {
@@ -537,31 +546,12 @@ async fn serve_image(
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let (path, media_type) = if thumbnail {
-        (
-            publication.thumb_path.as_deref(),
-            publication.thumb_media_type.as_deref(),
-        )
-    } else {
-        (
-            publication.cover_path.as_deref(),
-            publication.cover_media_type.as_deref(),
-        )
-    };
-
-    let (Some(path), Some(media_type)) = (path, media_type) else {
+    let Some((path, media_type)) = library::publication_image(&publication, thumbnail) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    match library::file_body(state, path).await {
-        Ok(body) => (
-            [
-                (header::CONTENT_TYPE, media_type.to_owned()),
-                (header::CACHE_CONTROL, "public, max-age=3600".to_owned()),
-            ],
-            body,
-        )
-            .into_response(),
+    match library::image_response(state, headers, &publication, path, media_type).await {
+        Ok(response) => response,
         Err(err) => {
             tracing::error!(error = %err, path, "failed to read cover image");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()

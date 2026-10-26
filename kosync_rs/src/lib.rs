@@ -55,6 +55,13 @@ pub fn build_state(config: &Config, pool: sqlx::SqlitePool) -> AppState {
     AppState::new(pool, config.clone(), tera, cookie_key)
 }
 
+/// Fill in covers and thumbnails that older imports left empty, returning the
+/// number of publications updated. [`run`] does this in the background on
+/// startup.
+pub async fn backfill_covers(state: &AppState) -> usize {
+    library::backfill_covers(state).await
+}
+
 /// Assemble the full application router for the given state.
 pub fn router(state: AppState) -> axum::Router {
     routes::router(state)
@@ -77,6 +84,17 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if rehashed > 0 {
         tracing::info!(rehashed, "corrected publication document digests");
     }
+
+    let backfill_state = state.clone();
+    tokio::spawn(async move {
+        let filled = backfill_covers(&backfill_state).await;
+        if filled > 0 {
+            tracing::info!(
+                filled,
+                "filled in missing publication covers and thumbnails"
+            );
+        }
+    });
 
     let app = routes::router(state.clone()).layer(axum::middleware::from_fn_with_state(
         state,

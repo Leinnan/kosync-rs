@@ -9,10 +9,13 @@
 mod atom;
 mod upload;
 
+use std::convert::Infallible;
+use std::net::SocketAddr;
+
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    extract::{ConnectInfo, FromRequestParts, Path, Query, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -43,6 +46,11 @@ const OPDS_PUBLICATION_TYPE: &str = "application/opds-publication+json";
 /// Media type for `EPUB` acquisition files.
 const EPUB_TYPE: &str = "application/epub+zip";
 
+/// Link relation for a full-size cover image.
+const IMAGE_REL: &str = "http://opds-spec.org/image";
+/// Link relation for a cover thumbnail.
+const THUMBNAIL_REL: &str = "http://opds-spec.org/image/thumbnail";
+
 /// Number of publications returned per feed page.
 const PER_PAGE: i64 = 20;
 
@@ -51,6 +59,8 @@ pub(crate) fn router(max_upload_bytes: usize) -> Router<AppState> {
     Router::new()
         .route("/opds/v2/", get(nav_feed))
         .route("/opds/v2/publications", get(publication_feed))
+        .route("/opds/v2/recent", get(recent_feed))
+        .route("/opds/v2/reading", get(reading_feed))
         .route("/opds/v2/authors", get(author_navigation_feed))
         .route("/opds/v2/authors/{name}", get(author_publication_feed))
         .route("/opds/v2/genres", get(genre_navigation_feed))
@@ -71,6 +81,9 @@ pub(crate) fn router(max_upload_bytes: usize) -> Router<AppState> {
         .route("/opds", get(atom::nav_feed))
         .route("/opds.xml", get(atom::nav_feed))
         .route("/opds/publications", get(atom::publication_feed))
+        .route("/opds/opensearch.xml", get(atom::opensearch_description))
+        .route("/opds/recent", get(atom::recent_feed))
+        .route("/opds/reading", get(atom::reading_feed))
         .route("/opds/authors", get(atom::author_navigation_feed))
         .route("/opds/authors/{name}", get(atom::author_publication_feed))
         .route("/opds/genres", get(atom::genre_navigation_feed))
@@ -250,17 +263,67 @@ async fn require_uploader(state: &AppState, headers: &HeaderMap) -> Result<store
         .map_err(auth_error)
 }
 
-/// Resolve the scheme and host of the incoming request for absolute links.
-fn base_url(headers: &HeaderMap) -> String {
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("http");
-    let host = headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
+/// The scheme and host that absolute feed links start with.
+pub(super) struct BaseUrl(pub(super) String);
+
+impl FromRequestParts<AppState> for BaseUrl {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        std::future::ready(Ok(Self(base_url(state, parts))))
+    }
+}
+
+/// Resolve the scheme and host for absolute links.
+///
+/// A configured public URL always wins. Otherwise `X-Forwarded-Proto` and
+/// `X-Forwarded-Host` are honoured only when the connecting peer is a trusted
+/// proxy, so clients cannot make the server emit links to another origin. A
+/// malformed host falls back to `localhost`.
+fn base_url(state: &AppState, parts: &Parts) -> String {
+    if let Some(public) = state.config.public_url.as_deref() {
+        return public.trim_end_matches('/').to_owned();
+    }
+
+    let headers = &parts.headers;
+    let trusted = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|ConnectInfo(addr)| state.trusted_proxies.contains(&addr.ip()));
+    let forwarded = |name: &str| trusted.then(|| first_value(headers, name)).flatten();
+
+    let scheme = forwarded("x-forwarded-proto")
+        .map(str::to_ascii_lowercase)
+        .filter(|scheme| scheme == "http" || scheme == "https")
+        .unwrap_or_else(|| "http".to_owned());
+    let host = forwarded("x-forwarded-host")
+        .or_else(|| first_value(headers, header::HOST.as_str()))
+        .filter(|host| valid_host(host))
         .unwrap_or("localhost");
     format!("{scheme}://{host}")
+}
+
+/// The first comma-separated value of a header, trimmed.
+fn first_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get(name)?
+        .to_str()
+        .ok()?
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+/// Whether `host` is a plausible `host[:port]` (including bracketed `IPv6`).
+fn valid_host(host: &str) -> bool {
+    host.len() <= 255
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':' | b'[' | b']'))
 }
 
 /// Format a Unix timestamp as an RFC 3339 UTC string.
@@ -312,29 +375,16 @@ fn publication_view(
         },
     ];
 
-    if publication.cover_path.is_some() {
-        links.push(OpdsLink {
-            rel: "http://opds-spec.org/image".to_owned(),
-            href: format!(
-                "{base}/opds/v2/publications/{}/cover",
-                publication.document_hash
-            ),
-            typ: publication.cover_media_type.clone(),
-            title: None,
-        });
-    }
-
-    if publication.thumb_path.is_some() {
-        links.push(OpdsLink {
-            rel: "http://opds-spec.org/image/thumbnail".to_owned(),
-            href: format!(
-                "{base}/opds/v2/publications/{}/thumbnail",
-                publication.document_hash
-            ),
-            typ: publication.thumb_media_type.clone(),
-            title: None,
-        });
-    }
+    links.extend(
+        image_links(base, publication)
+            .into_iter()
+            .map(|(rel, href, typ)| OpdsLink {
+                rel: rel.to_owned(),
+                href,
+                typ: typ.map(str::to_owned),
+                title: None,
+            }),
+    );
 
     OpdsPublication {
         context: PUBLICATION_CONTEXT,
@@ -361,6 +411,38 @@ fn publication_view(
     }
 }
 
+/// A publication's cover and thumbnail links as `(rel, href, type)`.
+///
+/// A cover without a generated thumbnail is also offered as the thumbnail, so
+/// clients that only render thumbnails still show a picture.
+fn image_links<'a>(
+    base: &str,
+    publication: &'a Publication,
+) -> Vec<(&'static str, String, Option<&'a str>)> {
+    let href = |kind: &str| {
+        format!(
+            "{base}/opds/v2/publications/{}/{kind}",
+            publication.document_hash
+        )
+    };
+    let cover_type = publication.cover_media_type.as_deref();
+
+    let mut links = Vec::with_capacity(2);
+    if publication.cover_path.is_some() {
+        links.push((IMAGE_REL, href("cover"), cover_type));
+    }
+    if publication.thumb_path.is_some() {
+        links.push((
+            THUMBNAIL_REL,
+            href("thumbnail"),
+            publication.thumb_media_type.as_deref(),
+        ));
+    } else if publication.cover_path.is_some() {
+        links.push((THUMBNAIL_REL, href("cover"), cover_type));
+    }
+    links
+}
+
 /// Parse the stored authors JSON array into author entries.
 fn parse_authors(authors: &str) -> Vec<Author> {
     serde_json::from_str::<Vec<String>>(authors)
@@ -383,9 +465,10 @@ fn parse_subjects(genres: &str) -> Vec<Subject> {
 async fn nav_feed(
     State(state): State<AppState>,
     headers: HeaderMap,
+    base: BaseUrl,
 ) -> Result<Json<Value>, Response> {
     let _user = require_user(&state, &headers).await?;
-    let base = base_url(&headers);
+    let base = base.0;
 
     let body = serde_json::json!({
         "@context": FEED_CONTEXT,
@@ -395,11 +478,28 @@ async fn nav_feed(
         },
         "links": [
             { "rel": "self", "href": format!("{base}/opds/v2/"), "type": OPDS_JSON_TYPE },
+            {
+                "rel": "search",
+                "href": format!("{base}/opds/v2/publications{{?query}}"),
+                "type": OPDS_JSON_TYPE,
+                "templated": true,
+            },
         ],
         "navigation": [
             {
                 "title": "All books",
                 "href": format!("{base}/opds/v2/publications"),
+                "type": OPDS_JSON_TYPE,
+            },
+            {
+                "title": Shelf::Recent.title(),
+                "href": format!("{base}/opds/v2/{}", Shelf::Recent.segment()),
+                "type": OPDS_JSON_TYPE,
+                "rel": "http://opds-spec.org/sort/new",
+            },
+            {
+                "title": Shelf::Reading.title(),
+                "href": format!("{base}/opds/v2/{}", Shelf::Reading.segment()),
                 "type": OPDS_JSON_TYPE,
             },
             {
@@ -427,10 +527,11 @@ async fn nav_feed(
 async fn publication_feed(
     State(state): State<AppState>,
     headers: HeaderMap,
+    base: BaseUrl,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<OpdsFeed>, Response> {
     let user = require_user(&state, &headers).await?;
-    let base = base_url(&headers);
+    let base = base.0;
 
     let search = query.query.as_deref().filter(|q| !q.trim().is_empty());
     let total = store::count_publications(&state.pool, search)
@@ -459,20 +560,125 @@ async fn publication_feed(
     ))
 }
 
+/// A curated listing that both feed families offer from the root.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Shelf {
+    /// Every publication, most recently added first.
+    Recent,
+    /// The requesting user's publications with progress below finished.
+    Reading,
+}
+
+impl Shelf {
+    /// The feed title.
+    pub(super) const fn title(self) -> &'static str {
+        match self {
+            Self::Recent => "Recently added",
+            Self::Reading => "Currently reading",
+        }
+    }
+
+    /// The URL path segment under `/opds/` or `/opds/v2/`.
+    pub(super) const fn segment(self) -> &'static str {
+        match self {
+            Self::Recent => "recent",
+            Self::Reading => "reading",
+        }
+    }
+
+    /// Load one page of the shelf for `user_id`, returning the total count,
+    /// the clamped page number, and the publications on it.
+    pub(super) async fn page(
+        self,
+        state: &AppState,
+        user_id: i64,
+        requested: Option<i64>,
+    ) -> Result<(i64, i64, Vec<Publication>), Response> {
+        let filter = match self {
+            Self::Recent => store::PublicationFilter {
+                sort: store::PublicationSort::Recent,
+                ..Default::default()
+            },
+            Self::Reading => store::PublicationFilter {
+                status: store::ReadingStatus::InProgress,
+                user_id,
+                ..Default::default()
+            },
+        };
+        let total = store::count_publications_filtered(&state.pool, &filter)
+            .await
+            .map_err(|err| store_error(&err))?;
+        let page = page_for(total, requested);
+        let publications = store::list_publications_filtered(
+            &state.pool,
+            &filter,
+            PER_PAGE,
+            (page - 1) * PER_PAGE,
+        )
+        .await
+        .map_err(|err| store_error(&err))?;
+        Ok((total, page, publications))
+    }
+}
+
+/// Render the OPDS 2.0 "Recently added" acquisition feed.
+async fn recent_feed(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    base: BaseUrl,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<OpdsFeed>, Response> {
+    shelf_feed(state, headers, base, query, Shelf::Recent).await
+}
+
+/// Render the OPDS 2.0 "Currently reading" acquisition feed.
+async fn reading_feed(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    base: BaseUrl,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<OpdsFeed>, Response> {
+    shelf_feed(state, headers, base, query, Shelf::Reading).await
+}
+
+/// Render an OPDS 2.0 acquisition feed for a shelf.
+async fn shelf_feed(
+    state: AppState,
+    headers: HeaderMap,
+    base: BaseUrl,
+    query: PageQuery,
+    shelf: Shelf,
+) -> Result<Json<OpdsFeed>, Response> {
+    let user = require_user(&state, &headers).await?;
+    let (total, page, publications) = shelf.page(&state, user.id, query.page).await?;
+    Ok(Json(
+        acquisition_feed(
+            &state,
+            user.id,
+            &base.0,
+            shelf.title().to_owned(),
+            &format!("/opds/v2/{}", shelf.segment()),
+            None,
+            total,
+            page,
+            publications,
+        )
+        .await,
+    ))
+}
+
 /// Render the OPDS 2.0 author navigation feed.
 async fn author_navigation_feed(
     State(state): State<AppState>,
     headers: HeaderMap,
+    base: BaseUrl,
 ) -> Result<Json<Value>, Response> {
     let _user = require_user(&state, &headers).await?;
     let groups = store::list_authors(&state.pool)
         .await
         .map_err(|err| store_error(&err))?;
     Ok(Json(group_navigation(
-        &base_url(&headers),
-        "Authors",
-        "authors",
-        groups,
+        &base.0, "Authors", "authors", groups,
     )))
 }
 
@@ -480,46 +686,40 @@ async fn author_navigation_feed(
 async fn genre_navigation_feed(
     State(state): State<AppState>,
     headers: HeaderMap,
+    base: BaseUrl,
 ) -> Result<Json<Value>, Response> {
     let _user = require_user(&state, &headers).await?;
     let groups = store::list_genres(&state.pool)
         .await
         .map_err(|err| store_error(&err))?;
-    Ok(Json(group_navigation(
-        &base_url(&headers),
-        "Genres",
-        "genres",
-        groups,
-    )))
+    Ok(Json(group_navigation(&base.0, "Genres", "genres", groups)))
 }
 
 /// Render the OPDS 2.0 series navigation feed.
 async fn series_navigation_feed(
     State(state): State<AppState>,
     headers: HeaderMap,
+    base: BaseUrl,
 ) -> Result<Json<Value>, Response> {
     let _user = require_user(&state, &headers).await?;
     let groups = store::list_series(&state.pool)
         .await
         .map_err(|err| store_error(&err))?;
-    Ok(Json(group_navigation(
-        &base_url(&headers),
-        "Series",
-        "series",
-        groups,
-    )))
+    Ok(Json(group_navigation(&base.0, "Series", "series", groups)))
 }
 
 /// Render the OPDS 2.0 acquisition feed for a named author.
 async fn author_publication_feed(
     State(state): State<AppState>,
     headers: HeaderMap,
+    base: BaseUrl,
     Path(name): Path<String>,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<OpdsFeed>, Response> {
     grouped_publication_feed(
         state,
         headers,
+        base,
         name,
         query,
         store::GroupKind::Author,
@@ -533,12 +733,14 @@ async fn author_publication_feed(
 async fn genre_publication_feed(
     State(state): State<AppState>,
     headers: HeaderMap,
+    base: BaseUrl,
     Path(name): Path<String>,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<OpdsFeed>, Response> {
     grouped_publication_feed(
         state,
         headers,
+        base,
         name,
         query,
         store::GroupKind::Genre,
@@ -552,12 +754,14 @@ async fn genre_publication_feed(
 async fn series_publication_feed(
     State(state): State<AppState>,
     headers: HeaderMap,
+    base: BaseUrl,
     Path(name): Path<String>,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<OpdsFeed>, Response> {
     grouped_publication_feed(
         state,
         headers,
+        base,
         name,
         query,
         store::GroupKind::Series,
@@ -602,9 +806,11 @@ fn group_navigation(
 }
 
 /// Render the acquisition feed for one author, genre, or series.
+#[allow(clippy::too_many_arguments)]
 async fn grouped_publication_feed(
     state: AppState,
     headers: HeaderMap,
+    base: BaseUrl,
     name: String,
     query: PageQuery,
     kind: store::GroupKind,
@@ -634,7 +840,7 @@ async fn grouped_publication_feed(
     .await
     .map_err(|err| store_error(&err))?;
 
-    let base = base_url(&headers);
+    let base = base.0;
     let endpoint = format!("/opds/v2/{segment}/{}", percent_encode_path_segment(&name));
     Ok(Json(
         acquisition_feed(
@@ -666,11 +872,17 @@ async fn acquisition_feed(
     publications: Vec<Publication>,
 ) -> OpdsFeed {
     let total_pages = ((total + PER_PAGE - 1) / PER_PAGE).max(1);
-    let mut views = Vec::with_capacity(publications.len());
-    for publication in &publications {
-        let progress = progress_for(state, user_id, publication).await;
-        views.push(publication_view(base, publication, progress.as_ref()));
-    }
+    let progress = store::get_progress_for_publications(&state.pool, user_id, &publications)
+        .await
+        .unwrap_or_else(|err| {
+            err.log();
+            vec![None; publications.len()]
+        });
+    let views = publications
+        .iter()
+        .zip(&progress)
+        .map(|(publication, progress)| publication_view(base, publication, progress.as_ref()))
+        .collect();
 
     let mut links = vec![OpdsLink {
         rel: "self".to_owned(),
@@ -747,10 +959,11 @@ fn percent_encode_path_segment(value: &str) -> String {
 async fn publication_detail(
     State(state): State<AppState>,
     headers: HeaderMap,
+    base: BaseUrl,
     Path(document_hash): Path<String>,
 ) -> Result<Json<OpdsPublication>, Response> {
     let user = require_user(&state, &headers).await?;
-    let base = base_url(&headers);
+    let base = base.0;
 
     let publication = store::get_publication_by_hash(&state.pool, &document_hash)
         .await
@@ -839,23 +1052,22 @@ async fn serve_publication_image(
         Err(response) => return response,
     };
 
-    let (path, media_type) = if thumbnail {
-        (
-            publication.thumb_path.as_deref(),
-            publication.thumb_media_type.as_deref(),
-        )
-    } else {
-        (
-            publication.cover_path.as_deref(),
-            publication.cover_media_type.as_deref(),
-        )
-    };
-
-    let (Some(path), Some(media_type)) = (path, media_type) else {
+    let Some((path, media_type)) = crate::library::publication_image(&publication, thumbnail)
+    else {
         return not_found();
     };
 
-    serve_file(state, path, media_type).await
+    match crate::library::image_response(state, headers, &publication, path, media_type).await {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::error!(error = %err, path, "failed to read stored image");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "message": "Failed to read file" })),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Stream a stored file as an HTTP response.

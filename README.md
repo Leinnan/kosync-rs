@@ -80,7 +80,8 @@ environment (for example under Docker Compose) works without one. See
 | `KOSYNC_RS_DATABASE_URL` | `sqlite://data/kosync.db` | SQLite connection string. |
 | `KOSYNC_RS_ADMIN_PASSWORD` | `admin` | Admin user password (MD5-hashed). |
 | `KOSYNC_RS_REGISTRATION_DISABLED` | `true` | Reject new registrations. Accounts are created by an administrator; set to `false` to allow public sign-up. |
-| `KOSYNC_RS_TRUSTED_PROXIES` | *(empty)* | Comma-separated proxy IPs for `X-Forwarded-For`. |
+| `KOSYNC_RS_TRUSTED_PROXIES` | *(empty)* | Comma-separated proxy IPs whose `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` headers are trusted. |
+| `KOSYNC_RS_PUBLIC_URL` | *(empty)* | Public base URL for absolute OPDS links (e.g. `https://books.example.com`). When unset, links use the request's `Host`, and trusted proxies' forwarded headers. |
 | `KOSYNC_RS_SINGLE_LINE_LOGGING` | `false` | Emit single-line log output. |
 | `KOSYNC_RS_BOOKS_DIR` | `data/books` | Directory for uploaded `EPUB` files and covers. |
 | `KOSYNC_RS_MAX_UPLOAD_BYTES` | `209715200` | Maximum upload size in bytes (200 MiB). |
@@ -154,7 +155,10 @@ same username/password in the device as you registered on the server (Basic auth
 
 > **Note:** HTTP Basic auth sends credentials in cleartext. Expose the server
 > behind a TLS reverse proxy (e.g. Caddy, nginx, Traefik) when accessed over the
-> internet.
+> internet. Feeds contain absolute links: behind a proxy, set
+> `KOSYNC_RS_PUBLIC_URL`, or list the proxy in `KOSYNC_RS_TRUSTED_PROXIES` so its
+> `X-Forwarded-Proto`/`X-Forwarded-Host` are used. Forwarded headers from any
+> other client are ignored, so they cannot redirect links elsewhere.
 
 Uploaded books are identified by KOReader's *partial MD5* document digest — the
 same value sent as the `document` field in progress-sync requests. This means
@@ -167,10 +171,15 @@ matching mode).
 | --- | --- | --- | --- |
 | `/opds/` | GET | Basic | OPDS 1.x (Atom) navigation feed. |
 | `/opds/publications?page=&query=` | GET | Basic | OPDS 1.x (Atom) acquisition feed. |
+| `/opds/recent?page=` | GET | Basic | OPDS 1.x "Recently added" feed, newest first. |
+| `/opds/reading?page=` | GET | Basic | OPDS 1.x "Currently reading" feed: the user's books with progress below 99%. |
+| `/opds/opensearch.xml` | GET | Basic | OpenSearch description for catalog search. |
 | `/opds/{authors,genres,series}` | GET | Basic | OPDS 1.x navigation feeds, grouped with publication counts. |
 | `/opds/{authors,genres,series}/{name}?page=` | GET | Basic | OPDS 1.x grouped acquisition feeds. |
 | `/opds/v2/` | GET | Basic | OPDS 2.0 navigation feed. |
 | `/opds/v2/publications?page=&query=` | GET | Basic | Paginated OPDS 2.0 publication feed. |
+| `/opds/v2/recent?page=` | GET | Basic | OPDS 2.0 "Recently added" feed. |
+| `/opds/v2/reading?page=` | GET | Basic | OPDS 2.0 "Currently reading" feed. |
 | `/opds/v2/{authors,genres,series}` | GET | Basic | OPDS 2.0 navigation feeds, grouped with publication counts. |
 | `/opds/v2/{authors,genres,series}/{name}?page=` | GET | Basic | OPDS 2.0 grouped acquisition feeds. |
 | `/opds/v2/publications/{hash}` | GET | Basic | Single publication manifest. |
@@ -181,6 +190,28 @@ matching mode).
 | `/opds/upload` | POST | uploader | Multipart `EPUB` upload (field `file`). Administrators and users granted upload permission. |
 
 Upload responses report each file as `imported`, `duplicate`, or `error`.
+Before parsing, each upload is checked as a zip archive: at most 10,000
+entries, no absolute or escaping paths, and at most 64 MiB per entry and 1 GiB
+in total once inflated (measured, not trusted from the archive's headers).
+
+Atom feeds carry `start` and `up` links, an OpenSearch description plus a
+directly templated search link, and Dublin Core identifier (`urn:isbn:` when
+known), publisher, and issue date on each entry.
+
+Covers are found the way reading systems do: the declared `cover-image`, then
+`<meta name="cover">` (including Calibre packages with prefixed elements), then
+the guide's cover page, then the first page of the book. A cover page resolves
+to the first raster picture it shows, including Calibre's `<svg><image>` wrapper.
+Each cover gets a `JPEG` thumbnail that fits 300×450 pixels, with transparent
+areas drawn on white. Feeds link thumbnails as `http://opds-spec.org/image/thumbnail`.
+Atom feeds also add the `x-stanza-cover-image*` relations. When a cover could not
+be turned into a thumbnail, the feed offers the cover itself as the thumbnail.
+Cover and thumbnail responses carry an `ETag` and answer `If-None-Match` with
+`304 Not Modified`, so e-readers re-browsing the catalog don't download them again.
+
+On startup the server fills in covers and thumbnails missing from earlier
+imports in the background. Books with no picture at all are re-checked on each
+start.
 
 Ingestion records embedded Dublin Core subjects as genres, normalizes ISBN-10
 and ISBN-13 identifiers, and records calibre/EPUB series metadata. With

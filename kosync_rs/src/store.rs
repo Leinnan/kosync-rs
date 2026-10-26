@@ -419,6 +419,77 @@ pub(crate) async fn get_progress_for_publication(
     Ok(None)
 }
 
+/// Fetch a user's sync progress for many publications in one query.
+///
+/// Returns one entry per publication, in order, matched like
+/// [`get_progress_for_publication`]: the binary digest first, then the
+/// file-name digest, then the literal file name (the most recent record wins
+/// when several share a file name).
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn get_progress_for_publications(
+    pool: &SqlitePool,
+    user_id: i64,
+    publications: &[Publication],
+) -> Result<Vec<Option<Document>>, StoreError> {
+    if publications.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let hashes = publications
+        .iter()
+        .flat_map(|p| std::iter::once(p.document_hash.as_str()).chain(p.file_name_hash.as_deref()));
+    let file_names: Vec<&str> = publications
+        .iter()
+        .filter_map(|p| p.file_name.as_deref())
+        .collect();
+
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        "SELECT document_hash, progress, percentage, device, device_id, timestamp,
+                title, authors, filename
+         FROM documents WHERE user_id = ",
+    );
+    query.push_bind(user_id).push(" AND (document_hash IN (");
+    let mut separated = query.separated(", ");
+    for hash in hashes {
+        separated.push_bind(hash);
+    }
+    query.push(")");
+    if !file_names.is_empty() {
+        query.push(" OR filename IN (");
+        let mut separated = query.separated(", ");
+        for name in &file_names {
+            separated.push_bind(*name);
+        }
+        query.push(")");
+    }
+    query.push(") ORDER BY timestamp DESC, id DESC");
+
+    let rows = query.build_query_as::<Document>().fetch_all(pool).await?;
+
+    let mut by_hash: HashMap<&str, &Document> = HashMap::new();
+    let mut by_file_name: HashMap<&str, &Document> = HashMap::new();
+    for doc in &rows {
+        by_hash.entry(doc.document_hash.as_str()).or_insert(doc);
+        if let Some(name) = doc.filename.as_deref() {
+            by_file_name.entry(name).or_insert(doc);
+        }
+    }
+
+    Ok(publications
+        .iter()
+        .map(|p| {
+            by_hash
+                .get(p.document_hash.as_str())
+                .or_else(|| by_hash.get(p.file_name_hash.as_deref()?))
+                .or_else(|| by_file_name.get(p.file_name.as_deref()?))
+                .map(|doc| (*doc).clone())
+        })
+        .collect())
+}
+
 /// Fetch the recorded progress history for a document, oldest first.
 ///
 /// # Errors
@@ -1031,6 +1102,66 @@ pub(crate) async fn list_publication_files(
     .fetch_all(pool)
     .await
     .map_err(StoreError::from)
+}
+
+/// A publication that lacks a cover image or a cover thumbnail.
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct MissingImages {
+    /// Row id.
+    pub(crate) id: i64,
+    /// `KOReader` partial `MD5` document digest.
+    pub(crate) document_hash: String,
+    /// Path of the stored `EPUB`, relative to the books directory.
+    pub(crate) file_path: String,
+    /// Path of the cover image, if one is stored.
+    pub(crate) cover_path: Option<String>,
+    /// MIME type of the stored cover image.
+    pub(crate) cover_media_type: Option<String>,
+}
+
+/// List publications missing a cover image or a cover thumbnail.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn list_publications_missing_images(
+    pool: &SqlitePool,
+) -> Result<Vec<MissingImages>, StoreError> {
+    sqlx::query_as::<_, MissingImages>(
+        "SELECT id, document_hash, file_path, cover_path, cover_media_type FROM publications
+         WHERE cover_path IS NULL OR thumb_path IS NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::from)
+}
+
+/// Record a publication's cover image and thumbnail files.
+///
+/// # Errors
+///
+/// Returns an error if the update fails.
+pub(crate) async fn update_publication_images(
+    pool: &SqlitePool,
+    id: i64,
+    cover: (&str, &str),
+    thumb_path: Option<&str>,
+    timestamp: i64,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "UPDATE publications SET cover_path = ?, cover_media_type = ?, thumb_path = ?,
+                thumb_media_type = ?, updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(cover.0)
+    .bind(cover.1)
+    .bind(thumb_path)
+    .bind(thumb_path.map(|_| "image/jpeg"))
+    .bind(timestamp)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Replace a publication's document digest, leaving its stored files in place.
