@@ -54,15 +54,16 @@ codes as the official server (e.g. `2001` unauthorized, `2002` username taken,
 ### With Docker (recommended)
 
 ```bash
-docker compose up -d --build
+KOSYNC_RS_ADMIN_PASSWORD='choose-a-password' docker compose up -d --build
 ```
 
-This stores the SQLite database in `./data` on the host.
+This stores the SQLite database in `./data` on the host. The password is only
+needed the first time, to create the `admin` account.
 
 ### With Cargo
 
 ```bash
-cargo run --release
+KOSYNC_RS_ADMIN_PASSWORD='choose-a-password' cargo run --release
 ```
 
 ## Configuration
@@ -78,7 +79,7 @@ environment (for example under Docker Compose) works without one. See
 | `KOSYNC_RS_HOST` | `0.0.0.0` | Bind address. |
 | `KOSYNC_RS_PORT` | `8090` | Listen port. |
 | `KOSYNC_RS_DATABASE_URL` | `sqlite://data/kosync.db` | SQLite connection string. |
-| `KOSYNC_RS_ADMIN_PASSWORD` | `admin` | Admin user password (MD5-hashed). |
+| `KOSYNC_RS_ADMIN_PASSWORD` | *(none)* | Password for the `admin` user created when the database has no administrator (MD5-hashed). Required then, ignored otherwise. |
 | `KOSYNC_RS_REGISTRATION_DISABLED` | `true` | Reject new registrations. Accounts are created by an administrator; set to `false` to allow public sign-up. |
 | `KOSYNC_RS_TRUSTED_PROXIES` | *(empty)* | Comma-separated proxy IPs whose `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` headers are trusted. |
 | `KOSYNC_RS_PUBLIC_URL` | *(empty)* | Public base URL for absolute OPDS links (e.g. `https://books.example.com`). When unset, links use the request's `Host`, and trusted proxies' forwarded headers. |
@@ -88,8 +89,33 @@ environment (for example under Docker Compose) works without one. See
 | `KOSYNC_RS_METADATA_ENRICHMENT` | `false` | Opt in to background Google Books/Open Library enrichment by ISBN. This sends uploaded-book ISBNs to those APIs. |
 
 The `admin` user is created on first start with the configured password and
-is used to access the management API and the web admin panel. Logging respects
-the `RUST_LOG` environment variable (defaults to `info`).
+is used to access the management API and the web admin panel. The server refuses
+to start if it has to create this user and `KOSYNC_RS_ADMIN_PASSWORD` is unset or
+blank, because no default password is safe on a server anyone can reach. Once an
+administrator exists the setting is ignored and the account is left alone: change
+its password at `/settings`. Logging respects the `RUST_LOG` environment variable
+(defaults to `info`).
+
+### Upgrading an existing deployment
+
+Earlier versions wrote `KOSYNC_RS_ADMIN_PASSWORD`, or `admin` when it was unset,
+over the `admin` account on every start, and marked it active and administrator.
+That no longer happens:
+
+- `admin` keeps the password applied by its last start under the old version. If
+  the variable was never set, that password is `admin`: the server logs a warning
+  on each start until you change it at `/settings`.
+- Changing the variable no longer changes the password, so you can remove it.
+- Restarting can no longer recover a lost password. Set a new one in the database
+  instead (on macOS, replace `md5sum | cut -d' ' -f1` with `md5 -q`):
+
+  ```bash
+  sqlite3 data/kosync.db "UPDATE users SET password_hash = '$(printf %s 'new-password' | md5sum | cut -d' ' -f1)' WHERE username = 'admin';"
+  ```
+
+- The management API can no longer delete `admin`. If an earlier version deleted
+  it and no other administrator exists, the server needs the variable to start,
+  and creates the account again from it.
 
 ## Web UI
 
@@ -105,8 +131,8 @@ Administrators additionally get a user-management page at `/admin/users` for:
 - granting or revoking the ability to upload books,
 - deleting accounts.
 
-The built-in `admin` account is protected from deactivation, password changes,
-and deletion. New accounts are allowed to upload by default; revoke the
+This page protects the built-in `admin` account from deactivation, password
+resets, and deletion; it changes its own password at `/settings`. New accounts are allowed to upload by default; revoke the
 permission per user to restrict who can add books to the shared library.
 
 ## Management API
@@ -116,14 +142,14 @@ the sync protocol, with the admin credentials:
 
 ```
 x-auth-user: admin
-x-auth-key: <MD5 hash of ADMIN_PASSWORD>
+x-auth-key: <MD5 hash of the admin password>
 ```
 
 | Endpoint | Method | Description |
 | --- | --- | --- |
 | `/manage/users` | GET | List all users. |
 | `/manage/users` | POST | Create a user (plain password, hashed server-side; optional boolean `can_upload`, default `true`). |
-| `/manage/users?username=` | DELETE | Delete a user (admin or self). |
+| `/manage/users?username=` | DELETE | Delete a user (admin or self). The built-in `admin` account cannot be deleted. |
 | `/manage/users/documents?username=` | GET | List a user's documents (admin or self). |
 | `/manage/users/documents?username=&documentHash=` | DELETE | Delete a document (admin or self). |
 | `/manage/users/active?username=` | PUT | Toggle a user's active status. |

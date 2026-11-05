@@ -117,6 +117,46 @@ async fn admin_cannot_toggle_own_upload_permission() {
 }
 
 #[tokio::test]
+async fn admin_account_cannot_be_deleted() {
+    let app = app(false).await;
+    register(&app).await;
+    let admin_key = md5("admin");
+    let headers = vec![("x-auth-user", "admin"), ("x-auth-key", admin_key.as_str())];
+    let uri = "/manage/users?username=admin";
+
+    let (status, _) = send(&app, "DELETE", uri, &headers, "").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Other users are still told they are not authorized.
+    let (status, _) = send(&app, "DELETE", uri, &auth_headers(), "").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // The account survived, so it can still authenticate.
+    let (status, body) = send(&app, "GET", "/manage/users", &headers, "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body[0]["username"], "admin");
+}
+
+#[tokio::test]
+async fn users_can_still_be_deleted() {
+    let app = app(false).await;
+    register(&app).await;
+
+    let (status, _) = send(
+        &app,
+        "DELETE",
+        "/manage/users?username=alice",
+        &auth_headers(),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = send(&app, "GET", "/users/auth", &auth_headers(), "").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn admin_can_create_user_without_upload_permission() {
     let app = app(false).await;
     let admin_key = md5("admin");

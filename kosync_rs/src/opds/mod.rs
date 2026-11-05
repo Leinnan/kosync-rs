@@ -1115,12 +1115,15 @@ async fn serve_publication_image(
 }
 
 /// Stream a stored file as an HTTP response.
+///
+/// Responses are `private` because they require authentication: `public` would
+/// let a shared cache reuse them for other clients, despite `Authorization`.
 async fn serve_file(state: &AppState, path: &str, media_type: &str) -> Response {
     match crate::library::file_body(state, path).await {
         Ok(body) => (
             [
                 (header::CONTENT_TYPE, media_type.to_owned()),
-                (header::CACHE_CONTROL, "public, max-age=3600".to_owned()),
+                (header::CACHE_CONTROL, "private, max-age=3600".to_owned()),
             ],
             body,
         )

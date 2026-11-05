@@ -37,6 +37,7 @@ pub fn test_config(database_url: &str, books_dir: &str, registration_disabled: b
         database_url: database_url.to_owned(),
         books_dir: books_dir.to_owned(),
         registration_disabled,
+        admin_password: Some("admin".to_owned()),
         ..Config::default()
     }
 }

@@ -32,12 +32,14 @@ use tracing_subscriber::EnvFilter;
 pub use config::{Config, ConfigError};
 pub use state::AppState;
 
-/// Connect to the database, run migrations, and seed the `admin` user.
+/// Connect to the database, run migrations, and seed the `admin` user if the
+/// database has no administrator.
 ///
 /// # Errors
 ///
 /// Returns an error if the database cannot be opened, migrations fail, or the
-/// admin user cannot be seeded.
+/// admin user cannot be seeded, including when it must be created and no password
+/// is configured.
 pub async fn init_db(
     config: &Config,
 ) -> Result<sqlx::SqlitePool, Box<dyn std::error::Error + Send + Sync>> {

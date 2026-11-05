@@ -161,6 +161,32 @@ async fn upload_feed_download_roundtrip() {
 }
 
 #[tokio::test]
+async fn publication_download_requires_auth_and_is_not_publicly_cacheable() {
+    let app = app(false).await;
+    let result = admin_upload(&app, &build_epub(None)).await;
+    let document_hash = result["results"][0]["id"].as_str().unwrap();
+    let uri = format!("/opds/v2/publications/{document_hash}/file");
+
+    let (status, _, _) = send_bytes(&app, "GET", &uri, &[], Vec::new()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let auth = basic("admin", "admin");
+    let (status, headers, _) = send_bytes(
+        &app,
+        "GET",
+        &uri,
+        &[("authorization", auth.as_str())],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get("cache-control").unwrap().to_str().unwrap(),
+        "private, max-age=3600"
+    );
+}
+
+#[tokio::test]
 async fn duplicate_upload_is_rejected() {
     let app = app(false).await;
     let epub = build_epub(None);

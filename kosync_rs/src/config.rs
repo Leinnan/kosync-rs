@@ -18,8 +18,10 @@ pub struct Config {
     /// `SQLite` connection string (e.g. `sqlite://data/kosync.db`).
     pub database_url: String,
 
-    /// Password for the seeded `admin` user. MD5-hashed before storage.
-    pub admin_password: String,
+    /// Password for the `admin` user created when the database has no
+    /// administrator. Required in that case and ignored otherwise, so changing
+    /// it does not change an existing account. MD5-hashed before storage.
+    pub admin_password: Option<String>,
 
     /// When `true`, new user registration via `/users/create` is rejected.
     ///
@@ -55,7 +57,7 @@ pub struct Config {
 
 /// A configuration error that never includes configured secret values.
 #[derive(Debug)]
-pub struct ConfigError(String);
+pub struct ConfigError(pub(crate) String);
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -71,7 +73,7 @@ impl Default for Config {
             host: "0.0.0.0".to_owned(),
             port: 8090,
             database_url: "sqlite://data/kosync.db".to_owned(),
-            admin_password: "admin".to_owned(),
+            admin_password: None,
             registration_disabled: true,
             trusted_proxies: String::new(),
             single_line_logging: false,
@@ -110,7 +112,7 @@ impl Config {
             host: value("KOSYNC_RS_HOST", "0.0.0.0"),
             port: parse("KOSYNC_RS_PORT", &value("KOSYNC_RS_PORT", "8090"))?,
             database_url: value("KOSYNC_RS_DATABASE_URL", "sqlite://data/kosync.db"),
-            admin_password: value("KOSYNC_RS_ADMIN_PASSWORD", "admin"),
+            admin_password: parse_admin_password(value("KOSYNC_RS_ADMIN_PASSWORD", "")),
             registration_disabled: parse(
                 "KOSYNC_RS_REGISTRATION_DISABLED",
                 &value("KOSYNC_RS_REGISTRATION_DISABLED", "true"),
@@ -144,6 +146,11 @@ impl Config {
     }
 }
 
+/// A blank admin password means unset, so it can never become a real password.
+fn parse_admin_password(value: String) -> Option<String> {
+    (!value.trim().is_empty()).then_some(value)
+}
+
 /// Normalize the optional public base URL: empty means unset, and a value must
 /// be an absolute `http` or `https` URL. A trailing slash is removed.
 fn parse_public_url(value: &str) -> Result<Option<String>, ConfigError> {
@@ -175,7 +182,17 @@ fn parse<T: FromStr>(name: &str, value: &str) -> Result<T, ConfigError> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::{parse, parse_public_url};
+    use super::{parse, parse_admin_password, parse_public_url};
+
+    #[test]
+    fn blank_admin_password_is_unset() {
+        assert_eq!(parse_admin_password(String::new()), None);
+        assert_eq!(parse_admin_password("  ".to_owned()), None);
+        assert_eq!(
+            parse_admin_password(" pass ".to_owned()).as_deref(),
+            Some(" pass ")
+        );
+    }
 
     #[test]
     fn public_url_is_optional_and_normalized() {

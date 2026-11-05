@@ -158,6 +158,10 @@ async fn delete_user(
         return response;
     }
 
+    if query.username == "admin" {
+        return message(StatusCode::BAD_REQUEST, "Cannot update admin user");
+    }
+
     match store::delete_user(&state.pool, &query.username).await {
         Ok(true) => message(StatusCode::OK, "Success"),
         Ok(false) => message(StatusCode::NOT_FOUND, "User does not exist"),
