@@ -985,6 +985,8 @@ fn size_columns(size: Option<(u32, u32)>) -> (Option<i64>, Option<i64>) {
 pub(crate) struct PublicationInput<'a> {
     /// `KOReader` partial `MD5` document digest.
     pub(crate) document_hash: &'a str,
+    /// Digest of the uploaded file, for books converted on upload.
+    pub(crate) source_hash: Option<&'a str>,
     /// `MD5` of the original file name.
     pub(crate) file_name_hash: Option<&'a str>,
     /// Original file name of the uploaded `EPUB`.
@@ -1056,13 +1058,14 @@ pub(crate) async fn insert_publication(
     let (thumb_width, thumb_height) = size_columns(images.thumb_size);
     let result = sqlx::query(
         "INSERT INTO publications
-         (document_hash, file_name_hash, file_name, title, authors, language,
+         (document_hash, source_hash, file_name_hash, file_name, title, authors, language,
           identifier, publisher, published, description, genres, isbn, series, series_index,
           file_path, file_size, cover_path, cover_media_type, thumb_path, thumb_media_type,
           cover_width, cover_height, thumb_width, thumb_height, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(input.document_hash)
+    .bind(input.source_hash)
     .bind(input.file_name_hash)
     .bind(input.file_name)
     .bind(input.title)
@@ -1105,6 +1108,22 @@ pub(crate) async fn get_publication_by_hash(
 ) -> Result<Option<Publication>, StoreError> {
     sqlx::query_as::<_, Publication>(publication_query!("WHERE document_hash = ?"))
         .bind(document_hash)
+        .fetch_optional(pool)
+        .await
+        .map_err(StoreError::from)
+}
+
+/// Fetch the document digest of the book converted from an uploaded file.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn document_hash_for_source(
+    pool: &SqlitePool,
+    source_hash: &str,
+) -> Result<Option<String>, StoreError> {
+    sqlx::query_scalar("SELECT document_hash FROM publications WHERE source_hash = ?")
+        .bind(source_hash)
         .fetch_optional(pool)
         .await
         .map_err(StoreError::from)

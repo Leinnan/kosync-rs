@@ -84,7 +84,7 @@ environment (for example under Docker Compose) works without one. See
 | `KOSYNC_RS_TRUSTED_PROXIES` | *(empty)* | Comma-separated proxy IPs whose `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` headers are trusted. |
 | `KOSYNC_RS_PUBLIC_URL` | *(empty)* | Public base URL for absolute OPDS links (e.g. `https://books.example.com`). When unset, links use the request's `Host`, and trusted proxies' forwarded headers. |
 | `KOSYNC_RS_SINGLE_LINE_LOGGING` | `false` | Emit single-line log output. |
-| `KOSYNC_RS_BOOKS_DIR` | `data/books` | Directory for uploaded `EPUB` files and covers. |
+| `KOSYNC_RS_BOOKS_DIR` | `data/books` | Directory for stored `EPUB` files and covers. |
 | `KOSYNC_RS_MAX_UPLOAD_BYTES` | `209715200` | Maximum upload size in bytes (200 MiB). |
 | `KOSYNC_RS_METADATA_ENRICHMENT` | `false` | Opt in to background Google Books/Open Library enrichment by ISBN. This sends uploaded-book ISBNs to those APIs. |
 
@@ -213,12 +213,18 @@ matching mode).
 | `/opds/v2/publications/{hash}/file` | GET | Basic | Download the `EPUB` file. |
 | `/opds/v2/publications/{hash}/cover` | GET | Basic | Cover image. |
 | `/opds/v2/publications/{hash}/thumbnail` | GET | Basic | Generated cover thumbnail. |
-| `/opds/upload` | POST | uploader | Multipart `EPUB` upload (field `file`). Administrators and users granted upload permission. |
+| `/opds/upload` | POST | uploader | Multipart `EPUB` or `MOBI` upload (field `file`). Administrators and users granted upload permission. |
 
 Upload responses report each file as `imported`, `duplicate`, or `error`.
 Before parsing, each upload is checked as a zip archive: at most 10,000
 entries, no absolute or escaping paths, and at most 64 MiB per entry and 1 GiB
 in total once inflated (measured, not trusted from the archive's headers).
+
+`MOBI` files are recognized by their content, converted to `EPUB` on upload, and
+only the `EPUB` is kept; the zip checks above then apply to the converted file.
+DRM-protected books are rejected. Uploading the same `MOBI` again reports a
+duplicate. A reader holding the original `MOBI` has a different document digest,
+so download the converted `EPUB` to sync progress against the library copy.
 
 Atom feeds carry `start` and `up` links, an OpenSearch description plus a
 directly templated search link, and Dublin Core identifier (`urn:isbn:` when

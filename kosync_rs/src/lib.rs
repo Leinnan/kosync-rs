@@ -15,6 +15,7 @@ mod library;
 /// EPUB metadata extraction and optional external enrichment.
 pub mod metadata;
 mod middleware;
+mod mobi;
 mod models;
 mod opds;
 mod routes;

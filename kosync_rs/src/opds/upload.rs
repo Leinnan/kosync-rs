@@ -1,4 +1,4 @@
-//! EPUB upload and deletion handlers for the shared OPDS library.
+//! Book upload and deletion handlers for the shared OPDS library.
 
 #![allow(
     clippy::result_large_err,
@@ -45,8 +45,8 @@ pub(super) struct UploadResponse {
     results: Vec<UploadItemResult>,
 }
 
-/// Handle a multipart `EPUB` upload (administrators and users granted the
-/// `can_upload` permission).
+/// Handle a multipart `EPUB` or `MOBI` upload (administrators and users granted
+/// the `can_upload` permission).
 ///
 /// # Errors
 ///

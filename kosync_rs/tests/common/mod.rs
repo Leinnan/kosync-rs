@@ -263,6 +263,74 @@ pub fn build_epub_with_metadata(
     zip.finish().unwrap().into_inner()
 }
 
+/// Build a minimal uncompressed `MOBI` file, optionally encrypted or with a cover.
+pub fn build_mobi(title: &str, author: &str, cover: Option<&[u8]>, encrypted: bool) -> Vec<u8> {
+    fn exth_record(kind: u32, value: &[u8]) -> Vec<u8> {
+        let length = u32::try_from(value.len() + 8).unwrap();
+        [&kind.to_be_bytes(), &length.to_be_bytes(), value].concat()
+    }
+
+    let text = b"<html><body><p>Chapter one<mbp:pagebreak/><p>Chapter two</body></html>";
+
+    let mut exth_records = exth_record(100, author.as_bytes());
+    let mut exth_count = 1u32;
+    if cover.is_some() {
+        exth_records.extend(exth_record(201, &0u32.to_be_bytes()));
+        exth_count += 1;
+    }
+    let exth_length = u32::try_from(exth_records.len() + 12).unwrap();
+    let exth = [
+        b"EXTH",
+        &exth_length.to_be_bytes(),
+        &exth_count.to_be_bytes(),
+        exth_records.as_slice(),
+    ]
+    .concat();
+
+    // Everything before the EXTH block: PalmDOC header (16) plus MOBI header (232).
+    let mut header = vec![0u8; 248];
+    let mut put = |offset: usize, value: u32| {
+        header[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+    };
+    put(0, 1 << 16); // no compression
+    put(4, u32::try_from(text.len()).unwrap());
+    put(8, (1 << 16) | 4096); // one text record of up to 4096 bytes
+    put(12, u32::from(encrypted) << 17); // encryption type 2 (Mobipocket)
+    put(20, 232); // MOBI header length
+    put(24, 2); // book
+    put(28, 65001); // UTF-8
+    put(36, 6); // format version
+    put(0x50, 2); // first non-book record
+    put(0x54, u32::try_from(248 + exth.len()).unwrap()); // title offset
+    put(0x58, u32::try_from(title.len()).unwrap()); // title length
+    put(0x5C, 9); // English
+    put(0x6C, 2); // first image record
+    put(0x80, 0x40); // EXTH present
+    put(0xF4, u32::MAX); // no NCX
+    header[16..20].copy_from_slice(b"MOBI");
+    let first_record = [header.as_slice(), exth.as_slice(), title.as_bytes()].concat();
+
+    let mut records: Vec<&[u8]> = vec![&first_record, text];
+    records.extend(cover);
+    records.push(b"\xe9\x8e\r\n"); // end-of-file record
+
+    let mut file = vec![0u8; 78];
+    file[..4].copy_from_slice(b"test");
+    file[60..68].copy_from_slice(b"BOOKMOBI");
+    file[76..78].copy_from_slice(&u16::try_from(records.len()).unwrap().to_be_bytes());
+    let mut offset = 78 + records.len() * 8 + 2;
+    for (index, record) in records.iter().enumerate() {
+        file.extend_from_slice(&u32::try_from(offset).unwrap().to_be_bytes());
+        file.extend_from_slice(&u32::try_from(index * 2).unwrap().to_be_bytes());
+        offset += record.len();
+    }
+    file.extend_from_slice(&[0, 0]);
+    for record in records {
+        file.extend_from_slice(record);
+    }
+    file
+}
+
 /// Build a multipart form body containing a single file field.
 pub fn multipart(filename: &str, content_type: &str, data: &[u8]) -> (Vec<u8>, String) {
     let boundary = "opds-test-boundary";

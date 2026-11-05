@@ -1,4 +1,4 @@
-//! EPUB upload page for the web frontend.
+//! Book upload page for the web frontend.
 //!
 //! Available to administrators and users granted the `can_upload` permission.
 
@@ -38,7 +38,7 @@ pub(super) async fn form(State(state): State<AppState>, cookies: Cookies) -> Res
     render(&state, "upload.html", &ctx)
 }
 
-/// Handle a multipart `EPUB` upload submission (administrators and
+/// Handle a multipart `EPUB` or `MOBI` upload submission (administrators and
 /// permitted uploaders only).
 pub(super) async fn submit(
     State(state): State<AppState>,

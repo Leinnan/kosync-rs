@@ -22,11 +22,10 @@ codegen-units = 16
 [profile.release.package."*"]
 opt-level = "s"
 
-# Shipping profile: abort on panic for a smaller binary. Do not build tests
-# with this profile: the test harness requires unwinding.
+# Shipping profile. Panics must keep unwinding: a converter panic on a malformed
+# upload has to fail that one file, not abort the server.
 [profile.dist]
 inherits = "release"
-panic = "abort"
 
 [workspace.lints.clippy.pedantic]
 level = "deny"

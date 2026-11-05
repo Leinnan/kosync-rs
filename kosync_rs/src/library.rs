@@ -1,4 +1,4 @@
-//! Shared `EPUB` import and file-management logic for the OPDS library.
+//! Shared book import and file-management logic for the OPDS library.
 
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use axum::{
 use crate::{
     cover,
     db::md5_hex,
-    epub, metadata,
+    epub, metadata, mobi,
     state::AppState,
     store::{self, CoverImages, PublicationInput, StoreError},
     util::now_unix,
@@ -186,12 +186,92 @@ pub(crate) fn sanitize_filename(name: &str) -> String {
 
 /// Parse and store a single uploaded file, returning its outcome.
 ///
-/// Duplicate detection keys on the `KOReader` partial `MD5` document digest,
-/// so sync progress always matches the file on the reader.
-#[allow(clippy::too_many_lines)]
+/// `MOBI` files are converted first and stored only as `EPUB`.
 pub(crate) async fn import_file(
     state: &AppState,
     file_name: Option<String>,
+    data: &[u8],
+) -> ImportOutcome {
+    if mobi::is_mobi(data) {
+        import_mobi(state, file_name, data).await
+    } else {
+        let stored_name = file_name.clone();
+        import_epub(state, file_name, stored_name, None, data).await
+    }
+}
+
+/// Convert an uploaded `MOBI` file and store the resulting `EPUB`.
+///
+/// Conversion output is not guaranteed to be stable, so duplicates key on the
+/// digest of the uploaded file. The outcome keeps the uploaded name, while the
+/// publication records the name of the `EPUB` it actually holds.
+async fn import_mobi(state: &AppState, file_name: Option<String>, data: &[u8]) -> ImportOutcome {
+    let source_hash = epub::partial_md5_bytes(data);
+
+    if let Ok(Some(document_hash)) =
+        store::document_hash_for_source(&state.pool, &source_hash).await
+    {
+        return ImportOutcome {
+            file_name,
+            status: ImportStatus::Duplicate,
+            document_hash: Some(document_hash),
+            message: None,
+        };
+    }
+
+    let source = data.to_vec();
+    let converted = tokio::task::spawn_blocking(move || mobi::to_epub(&source)).await;
+    let epub = match converted {
+        Ok(Ok(epub)) => epub,
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "uploaded MOBI could not be converted");
+            let message = if matches!(err, mobi::ConvertError::DrmProtected) {
+                "DRM-protected books cannot be converted"
+            } else {
+                "Not a valid MOBI file"
+            };
+            return ImportOutcome {
+                file_name,
+                status: ImportStatus::Error,
+                document_hash: None,
+                message: Some(message.to_owned()),
+            };
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "MOBI conversion task failed");
+            return ImportOutcome {
+                file_name,
+                status: ImportStatus::Error,
+                document_hash: None,
+                message: Some("Could not convert this MOBI file".to_owned()),
+            };
+        }
+    };
+
+    let stored_name = file_name.as_deref().map(epub_file_name);
+    import_epub(state, file_name, stored_name, Some(&source_hash), &epub).await
+}
+
+/// Replace a file name's extension with `.epub`.
+fn epub_file_name(name: &str) -> String {
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    format!("{stem}.epub")
+}
+
+/// Parse and store an `EPUB`, returning its outcome.
+///
+/// `file_name` is reported back to the uploader; `stored_name` is recorded on
+/// the publication and `source_hash` identifies the upload it was converted
+/// from, if any.
+///
+/// Duplicate detection keys on the `KOReader` partial `MD5` document digest,
+/// so sync progress always matches the file on the reader.
+#[allow(clippy::too_many_lines)]
+async fn import_epub(
+    state: &AppState,
+    file_name: Option<String>,
+    stored_name: Option<String>,
+    source_hash: Option<&str>,
     data: &[u8],
 ) -> ImportOutcome {
     let document_hash = epub::partial_md5_bytes(data);
@@ -269,18 +349,19 @@ pub(crate) async fn import_file(
         .title
         .clone()
         .filter(|t| !t.trim().is_empty())
-        .or_else(|| file_name.clone())
+        .or_else(|| stored_name.clone())
         .unwrap_or_else(|| "Untitled".to_owned());
 
     let authors = serde_json::to_string(&parsed.authors).unwrap_or_else(|_| "[]".to_owned());
     let genres = serde_json::to_string(&parsed.subjects).unwrap_or_else(|_| "[]".to_owned());
-    let file_name_hash = file_name.as_deref().map(md5_hex);
+    let file_name_hash = stored_name.as_deref().map(md5_hex);
     let timestamp = now_unix();
 
     let input = PublicationInput {
         document_hash: &document_hash,
+        source_hash,
         file_name_hash: file_name_hash.as_deref(),
-        file_name: file_name.as_deref(),
+        file_name: stored_name.as_deref(),
         title: &title,
         authors: &authors,
         language: parsed.language.as_deref(),

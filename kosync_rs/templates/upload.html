@@ -11,7 +11,7 @@
 <div class="page-header">
   <hgroup>
     <h1>Upload books</h1>
-    <p>Add EPUB files to the shared library. Covers and metadata are extracted automatically.</p>
+    <p>Add EPUB or MOBI files to the shared library. MOBI files are converted to EPUB. Covers and metadata are extracted automatically.</p>
   </hgroup>
 </div>
 
@@ -23,10 +23,10 @@
     <div class="dropzone" id="dropzone">
       <span class="empty-icon">{{ icons::icon(name="upload") }}</span>
       <strong>Drop files here or click to browse</strong>
-      <p>EPUB, several at once</p>
-      <label class="visually-hidden" for="upload-files">EPUB files</label>
+      <p>EPUB or MOBI, several at once</p>
+      <label class="visually-hidden" for="upload-files">EPUB or MOBI files</label>
       <input id="upload-files" type="file" name="file"
-             accept=".epub,application/epub+zip" multiple required>
+             accept=".epub,application/epub+zip,.mobi,application/x-mobipocket-ebook" multiple required>
     </div>
 
     <ul class="file-list" id="file-list" aria-live="polite"></ul>
