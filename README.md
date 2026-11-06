@@ -51,7 +51,7 @@ codes as the official server (e.g. `2001` unauthorized, `2002` username taken,
 
 ## Running
 
-### With Docker (recommended)
+### With Docker
 
 ```bash
 KOSYNC_RS_ADMIN_PASSWORD='choose-a-password' docker compose up -d --build
@@ -65,6 +65,58 @@ needed the first time, to create the `admin` account.
 ```bash
 KOSYNC_RS_ADMIN_PASSWORD='choose-a-password' cargo run --release
 ```
+
+### As a systemd service
+
+The binary is self-contained (templates, static assets and SQLite are built
+in), so a deployment is the executable, an environment file and a data
+directory. Compiling needs more memory than a small server may have, so build
+elsewhere: `just build-linux-amd64` cross-compiles an x86_64 Linux binary on
+any machine with `zig` and `cargo-zigbuild` (an Apple Silicon Mac included) to
+`target/dist/kosync_rs-linux-amd64`. It runs on glibc 2.28 and newer; pass
+another minimum with `just build-linux-amd64 2.31`.
+
+One-time setup on the server:
+
+```sh
+useradd --system --no-create-home --home-dir /var/lib/kosync --shell /usr/sbin/nologin kosync
+install -o root -g root -m 0700 -d /etc/kosync
+install -o root -g root -m 0600 .env.example /etc/kosync/kosync.env  # then edit it
+install -o root -g root -m 0644 deploy/kosync.service /etc/systemd/system/kosync.service
+systemctl daemon-reload
+systemctl enable kosync
+```
+
+Set `KOSYNC_RS_HOST=127.0.0.1` in `/etc/kosync/kosync.env` when a reverse
+proxy on the same host serves it, and list that proxy in
+`KOSYNC_RS_TRUSTED_PROXIES` (`127.0.0.1,::1`) so logs show client addresses.
+The unit keeps its data in `/var/lib/kosync/data`; to put it elsewhere, add a
+drop-in such as `/etc/systemd/system/kosync.service.d/data.conf`:
+
+```ini
+[Unit]
+RequiresMountsFor=/mnt/slab
+
+[Service]
+StateDirectory=
+WorkingDirectory=/mnt/slab/kosync
+ReadWritePaths=
+ReadWritePaths=/mnt/slab/kosync/data
+```
+
+The directory named in `ReadWritePaths` must exist and belong to `kosync`.
+
+Then, from your workstation, build, upload and restart in one step:
+
+```bash
+just deploy root@your-server
+```
+
+[`scripts/install-update.sh`](scripts/install-update.sh) installs the binary
+over the one the unit runs, keeps the old one as `kosync_rs.previous`, restarts
+the service and waits for `/healthcheck`. It does not roll back on its own,
+because migrations run at startup; on failure it prints the journal and the
+command to restore the previous binary. `journalctl -u kosync` shows the logs.
 
 ## Configuration
 

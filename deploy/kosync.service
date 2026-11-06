@@ -1,0 +1,46 @@
+# /etc/systemd/system/kosync.service
+#
+# Paths can be changed with a drop-in such as
+# /etc/systemd/system/kosync.service.d/data.conf instead of editing this file.
+[Unit]
+Description=kosync-rs KOReader sync server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Type=simple rather than exec: systemd before v240 (e.g. RHEL 8) lacks exec.
+Type=simple
+User=kosync
+Group=kosync
+# The relative KOSYNC_RS_DATABASE_URL and KOSYNC_RS_BOOKS_DIR defaults
+# (data/kosync.db, data/books) resolve against this directory.
+WorkingDirectory=/var/lib/kosync
+StateDirectory=kosync
+EnvironmentFile=/etc/kosync/kosync.env
+ExecStart=/usr/local/bin/kosync_rs
+
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15s
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/kosync
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
