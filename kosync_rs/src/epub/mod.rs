@@ -9,8 +9,12 @@ use md5::{Digest, Md5};
 
 mod package;
 mod preflight;
+mod rewrite;
 
-pub(crate) use preflight::{PreflightError, preflight};
+pub(crate) use package::Cover;
+pub(crate) use rewrite::replace_entry;
+
+pub(crate) use preflight::preflight;
 
 /// Size, in bytes, of each sample read by the partial digest.
 const SAMPLE_SIZE: usize = 1024;
@@ -42,8 +46,8 @@ pub(crate) struct ParsedEpub {
     pub(crate) series: Option<String>,
     /// The position within the series, if present.
     pub(crate) series_index: Option<f64>,
-    /// The cover image bytes and MIME type, if present.
-    pub(crate) cover: Option<(Vec<u8>, String)>,
+    /// The cover picture, if one was found.
+    pub(crate) cover: Option<Cover>,
 }
 
 /// Compute the `KOReader` partial `MD5` document digest of `data`.

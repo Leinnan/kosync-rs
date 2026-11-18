@@ -23,7 +23,7 @@ async fn app_with_pool() -> (Router, SqlitePool) {
 
     let config = test_config(&url, &books_dir, false);
     let pool = init_db(&config).await.unwrap();
-    (router(build_state(&config, pool.clone())), pool)
+    (router(build_state(&config, pool.clone()).unwrap()), pool)
 }
 
 /// Upload a book titled `title` as admin and return its document digest.

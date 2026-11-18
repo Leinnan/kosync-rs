@@ -52,7 +52,7 @@ pub async fn app(registration_disabled: bool) -> Router {
 
     let config = test_config(&url, &books_dir, registration_disabled);
     let pool = init_db(&config).await.unwrap();
-    router(build_state(&config, pool))
+    router(build_state(&config, pool).unwrap())
 }
 
 /// Send a JSON request and decode the JSON response body.
@@ -82,6 +82,139 @@ pub async fn send(
     (status, json)
 }
 
+/// The value of the `Set-Cookie` header that sets `name`, as `name=value`.
+pub fn cookie_named(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .map(|value| value.split(';').next().unwrap_or_default().to_owned())
+        .find(|pair| pair.starts_with(&format!("{name}=")))
+}
+
+/// Fetch the login page and return its anonymous CSRF cookie and token.
+pub async fn login_csrf(app: &Router) -> (String, String) {
+    let (_, headers, _) = raw_send(app, "GET", "/login", &[], Body::empty()).await;
+    let cookie = cookie_named(&headers, "kosync_anon_csrf").unwrap();
+    let token = cookie.split_once('=').unwrap().1.to_owned();
+    (cookie, token)
+}
+
+/// Post the login form with a valid anonymous CSRF token and return the
+/// response.
+pub async fn post_login(app: &Router, body: &str) -> (StatusCode, HeaderMap, String) {
+    let (cookie, token) = login_csrf(app).await;
+    send_html(
+        app,
+        "POST",
+        "/login",
+        &[
+            (JSON, "application/x-www-form-urlencoded"),
+            ("cookie", cookie.as_str()),
+        ],
+        &format!("{body}&csrf_token={token}"),
+    )
+    .await
+}
+
+/// Log in via the web form and return the session cookie, as `name=value`.
+pub async fn login(app: &Router, username: &str, password: &str) -> String {
+    let (_, headers, _) =
+        post_login(app, &format!("username={username}&password={password}")).await;
+    cookie_named(&headers, "kosync_session").unwrap()
+}
+
+/// The CSRF token of the session in `cookie`, read from a page's meta tag.
+pub async fn session_csrf(app: &Router, cookie: &str) -> String {
+    let (_, _, bytes) = raw_send(
+        app,
+        "GET",
+        "/settings",
+        &[("cookie", cookie)],
+        Body::empty(),
+    )
+    .await;
+    let page = String::from_utf8_lossy(&bytes);
+    let marker = r#"<meta name="csrf-token" content=""#;
+    let start = page.find(marker).unwrap() + marker.len();
+    let end = start + page[start..].find('"').unwrap();
+    page[start..end].to_owned()
+}
+
+/// Follow a redirect that set a flash message and return the page it shows,
+/// sending the session in `cookie` along with the flash cookie.
+pub async fn follow_flash(app: &Router, cookie: &str, headers: &HeaderMap) -> String {
+    let location = headers
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let flash = cookie_named(headers, "kosync_flash").unwrap();
+    let cookies = format!("{cookie}; {flash}");
+    let (_, _, bytes) = raw_send(
+        app,
+        "GET",
+        &location,
+        &[("cookie", &cookies)],
+        Body::empty(),
+    )
+    .await;
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+/// Send a request like the browser does: a `POST` carrying a session cookie
+/// also sends that session's CSRF token in `X-CSRF-Token`, as `app.js` does for
+/// htmx, unless the caller sets that header itself.
+async fn browser_send(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Body,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let session = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+        .map(|(_, value)| *value)
+        .filter(|value| value.contains("kosync_session="));
+    let explicit = headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("x-csrf-token"));
+    match session {
+        Some(cookie) if method == "POST" && !explicit => {
+            let token = session_csrf(app, cookie).await;
+            let mut with_token = headers.to_vec();
+            with_token.push(("x-csrf-token", token.as_str()));
+            raw_send(app, method, uri, &with_token, body).await
+        }
+        _ => raw_send(app, method, uri, headers, body).await,
+    }
+}
+
+/// Send a request exactly as given, with no CSRF token added.
+pub async fn raw_send(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Body,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let mut builder = Request::builder().method(method).uri(uri);
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let response = app
+        .clone()
+        .oneshot(builder.body(body).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, bytes.to_vec())
+}
+
 /// Send a request and return the response headers and text body.
 pub async fn send_html(
     app: &Router,
@@ -90,16 +223,8 @@ pub async fn send_html(
     headers: &[(&str, &str)],
     body: &str,
 ) -> (StatusCode, HeaderMap, String) {
-    let mut builder = Request::builder().method(method).uri(uri);
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let request = builder.body(Body::from(body.to_owned())).unwrap();
-
-    let response = app.clone().oneshot(request).await.unwrap();
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let (status, headers, bytes) =
+        browser_send(app, method, uri, headers, Body::from(body.to_owned())).await;
     (status, headers, String::from_utf8_lossy(&bytes).to_string())
 }
 
@@ -152,26 +277,6 @@ pub async fn seed_documents(app: &Router, username: &str, password: &str, count:
         ];
         send(app, "PUT", "/syncs/progress", &headers, &body).await;
     }
-}
-
-/// Log in via the web form and return the session cookie value.
-pub async fn login(app: &Router, username: &str, password: &str) -> String {
-    let (_, headers, _) = send_html(
-        app,
-        "POST",
-        "/login",
-        &[(JSON, "application/x-www-form-urlencoded")],
-        &format!("username={username}&password={password}"),
-    )
-    .await;
-    headers
-        .get("set-cookie")
-        .and_then(|v| v.to_str().ok())
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_owned()
 }
 
 /// Build a minimal `EPUB` archive, optionally including a cover image.
@@ -354,22 +459,7 @@ pub async fn send_bytes(
     headers: &[(&str, &str)],
     body: Vec<u8>,
 ) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
-    let mut builder = Request::builder().method(method).uri(uri);
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let request = builder.body(Body::from(body)).unwrap();
-    let response = app.clone().oneshot(request).await.unwrap();
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = response
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes()
-        .to_vec();
-    (status, headers, bytes)
+    browser_send(app, method, uri, headers, Body::from(body)).await
 }
 
 /// Build an `EPUB` archive from raw `(path, contents)` entries. The

@@ -8,7 +8,7 @@ use axum::{Router, http::StatusCode};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
-use common::{login, md5, send_html, test_config};
+use common::{cookie_named, follow_flash, login, md5, post_login, send_html, test_config};
 use kosync_rs::{Config, build_state, init_db, router};
 
 /// Content type for HTML form submissions.
@@ -31,20 +31,14 @@ async fn boot(dir: &TempDir, admin_password: Option<&str>) -> SqlitePool {
 
 /// Build the application for a booted deployment.
 fn app_for(dir: &TempDir, pool: &SqlitePool) -> Router {
-    router(build_state(&config(dir, None), pool.clone()))
+    router(build_state(&config(dir, None), pool.clone()).unwrap())
 }
 
 /// Whether the web login form accepts the given credentials.
 async fn can_log_in(app: &Router, username: &str, password: &str) -> bool {
-    let (_, headers, _) = send_html(
-        app,
-        "POST",
-        "/login",
-        &[("content-type", FORM)],
-        &format!("username={username}&password={password}"),
-    )
-    .await;
-    headers.get("set-cookie").is_some()
+    let (_, headers, _) =
+        post_login(app, &format!("username={username}&password={password}")).await;
+    cookie_named(&headers, "kosync_session").is_some()
 }
 
 /// The stored `(password_hash, is_active, is_administrator)` of a user.
@@ -119,8 +113,8 @@ async fn password_changed_in_settings_survives_restart() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let location = headers.get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("notice=password-changed"), "{location}");
+    let page = follow_flash(&app, &cookie, &headers).await;
+    assert!(page.contains("Password changed."), "{page}");
     pool.close().await;
 
     let pool = boot(&dir, Some("first")).await;

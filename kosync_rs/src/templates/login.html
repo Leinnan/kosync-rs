@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(key="login_title") }}{% endblock title %}
+{% block body_class %}auth-page{% endblock body_class %}
+
+{% block content %}
+<article class="auth-card">
+  <header>
+    <span class="brand-mark">{{<icon name="book"/>}}</span>
+    <h1>{{ t(key="login_title") }}</h1>
+    <p>{{ t(key="login_lead") }}</p>
+  </header>
+
+  {% if error %}
+  <p id="login-error" class="status-message error" role="alert">{{ error }}</p>
+  {% endif %}
+
+  <form method="post" action="/login"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      {{ t(key="login_username") }}
+      <input type="text" name="username" value="{{ form_username | default(value='') }}" autocomplete="username" required autofocus
+             {% if error %}aria-describedby="login-error" aria-invalid="true"{% endif %}>
+    </label>
+    <label for="login-password">{{ t(key="login_password") }}</label>
+    <div class="password-field">
+      <input id="login-password" type="password" name="password" autocomplete="current-password" required
+             {% if error %}aria-describedby="login-error" aria-invalid="true"{% endif %}>
+      <button type="button" class="icon-button" data-toggle-password="login-password"
+              aria-label="{{ t(key="js_password_show") }}" aria-pressed="false">{{<icon name="eye"/>}}</button>
+    </div>
+    <button type="submit">{{ t(key="login_submit") }}</button>
+  </form>
+
+  <p class="auth-hint">
+    {{ t(key="login_hint_html") | safe }}
+    <br><a href="/help">{{ t(key="login_help_link") }}</a>
+  </p>
+</article>
+{% endblock content %}

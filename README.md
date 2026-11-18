@@ -135,10 +135,13 @@ environment (for example under Docker Compose) works without one. See
 | `KOSYNC_RS_REGISTRATION_DISABLED` | `true` | Reject new registrations. Accounts are created by an administrator; set to `false` to allow public sign-up. |
 | `KOSYNC_RS_TRUSTED_PROXIES` | *(empty)* | Comma-separated proxy IPs whose `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` headers are trusted. |
 | `KOSYNC_RS_PUBLIC_URL` | *(empty)* | Public base URL for absolute OPDS links (e.g. `https://books.example.com`). When unset, links use the request's `Host`, and trusted proxies' forwarded headers. |
-| `KOSYNC_RS_SINGLE_LINE_LOGGING` | `false` | Emit single-line log output. |
 | `KOSYNC_RS_BOOKS_DIR` | `data/books` | Directory for stored `EPUB` files and covers. |
 | `KOSYNC_RS_MAX_UPLOAD_BYTES` | `209715200` | Maximum upload size in bytes (200 MiB). |
 | `KOSYNC_RS_METADATA_ENRICHMENT` | `false` | Opt in to background Google Books/Open Library enrichment by ISBN. This sends uploaded-book ISBNs to those APIs. |
+| `KOSYNC_RS_DEFAULT_LANGUAGE` | `en` | Language (`en` or `pl`) for browsers that ask for neither, and for e-readers that send no `Accept-Language`. |
+| `KOSYNC_RS_COOKIE_SECURE` | `true` when `KOSYNC_RS_PUBLIC_URL` is `https`, else `false` | Mark session cookies `Secure`, so browsers only send them over HTTPS. |
+| `KOSYNC_RS_TEMPLATE_DIR` | *(empty)* | Development: read templates from this directory (e.g. `kosync_rs/src/templates`) instead of the binary. Build with `--features reload` to pick up edits without a restart. |
+| `KOSYNC_RS_STATIC_DIR` | *(empty)* | Development: serve `/static/` from this directory (e.g. `kosync_rs/src/static`) instead of the binary. |
 
 The `admin` user is created on first start with the configured password and
 is used to access the management API and the web admin panel. The server refuses
@@ -146,7 +149,9 @@ to start if it has to create this user and `KOSYNC_RS_ADMIN_PASSWORD` is unset o
 blank, because no default password is safe on a server anyone can reach. Once an
 administrator exists the setting is ignored and the account is left alone: change
 its password at `/settings`. Logging respects the `RUST_LOG` environment variable
-(defaults to `info`).
+(defaults to `info,sqlx=warn`). `GET /health` answers once the process is up and
+`GET /ready` once the database answers; on `SIGTERM` the server finishes
+in-flight requests before exiting.
 
 ### Upgrading an existing deployment
 
@@ -162,18 +167,28 @@ That no longer happens:
   instead (on macOS, replace `md5sum | cut -d' ' -f1` with `md5 -q`):
 
   ```bash
-  sqlite3 data/kosync.db "UPDATE users SET password_hash = '$(printf %s 'new-password' | md5sum | cut -d' ' -f1)' WHERE username = 'admin';"
+  sqlite3 data/kosync.db "UPDATE users SET password_hash = '$(printf %s 'new-password' | md5sum | cut -d' ' -f1)', web_password_hash = NULL WHERE username = 'admin';"
   ```
 
 - The management API can no longer delete `admin`. If an earlier version deleted
   it and no other administrator exists, the server needs the variable to start,
   and creates the account again from it.
+- Web sign-ins now use database sessions, so everyone is signed out once after
+  upgrading. Passwords are unchanged; see [Web UI](#web-ui).
 
 ## Web UI
 
 The server renders a small HTML frontend at `/` (progress dashboard, `/books`
 for the shared library, `/books/upload`, and `/help`). Log in at `/login` with a
 username and password.
+
+Sessions are stored in the database (only a hash of the cookie's token is kept)
+and last 30 days. Every form carries a CSRF token, and five failed sign-ins lock
+a username for 15 minutes. KOReader keeps authenticating with the MD5 of the
+password it sends; the web sign-in checks an Argon2id hash instead. Accounts that
+only have the MD5 (created by KOReader or by an earlier version) get the Argon2id
+hash on their first web sign-in. Changing a password signs out the account's other
+browsers; an administrator's reset or deactivation signs it out everywhere.
 
 Administrators additionally get a user-management page at `/admin/users` for:
 
@@ -186,6 +201,22 @@ Administrators additionally get a user-management page at `/admin/users` for:
 This page protects the built-in `admin` account from deactivation, password
 resets, and deletion; it changes its own password at `/settings`. New accounts are allowed to upload by default; revoke the
 permission per user to restrict who can add books to the shared library.
+
+### Languages
+
+The web UI, the OPDS feed titles, and upload messages are available in English
+and Polish. A request's language is, in order: the signed-in user's saved choice
+(Settings → Language), the language cookie set by the switcher in the header,
+the browser's `Accept-Language`, then `KOSYNC_RS_DEFAULT_LANGUAGE`. OPDS feeds use
+the account's saved choice, since e-readers send no cookies. The KOReader sync
+protocol and the `/manage` API stay in English.
+
+Every string lives in [`kosync_rs/locales/i18n.csv`](kosync_rs/locales/i18n.csv):
+one row per key, one column per language. `{name}` marks a value filled in at
+run time, keys ending in `_html` may contain markup, and counted strings have a
+row per plural form (`_one`, `_few`, `_many`, `_other`). To add a language, add
+a column headed with its code; `cargo test` checks that every key has a value
+and that every key the code uses exists.
 
 ## Management API
 

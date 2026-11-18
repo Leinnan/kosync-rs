@@ -12,7 +12,9 @@ use tower_cookies::Cookies;
 
 use crate::{library, state::AppState};
 
-use super::{base_context, current_user, is_htmx, render};
+use web_mev_axum::RequestError;
+
+use super::{HtmlError, base_context, csrf_header_ok, current_user, is_htmx, render};
 
 /// A per-file upload result prepared for rendering.
 #[derive(Debug, Serialize)]
@@ -34,12 +36,20 @@ pub(super) async fn form(State(state): State<AppState>, cookies: Cookies) -> Res
         return Redirect::to("/books").into_response();
     }
 
-    let ctx = base_context(&user, "upload");
+    let ctx = base_context(&state, &user, "upload");
     render(&state, "upload.html", &ctx)
+}
+
+/// The response to an upload without the session's CSRF token.
+fn csrf_rejected() -> Response {
+    HtmlError::from(RequestError::forbidden("invalid CSRF token")).into_response()
 }
 
 /// Handle a multipart `EPUB` or `MOBI` upload submission (administrators and
 /// permitted uploaders only).
+///
+/// The CSRF token comes in the `X-CSRF-Token` header (htmx) or as a
+/// `csrf_token` part before the files (a plain form post).
 pub(super) async fn submit(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -54,6 +64,7 @@ pub(super) async fn submit(
         return Redirect::to("/books").into_response();
     }
 
+    let mut csrf_ok = csrf_header_ok(&user, &headers);
     let mut results = Vec::new();
 
     loop {
@@ -66,6 +77,15 @@ pub(super) async fn submit(
             }
         };
 
+        if field.name() == Some("csrf_token") {
+            let supplied = field.text().await.unwrap_or_default();
+            csrf_ok = csrf_ok || web_mev_core::secure_eq(&user.csrf_token, &supplied);
+            continue;
+        }
+        if !csrf_ok {
+            return csrf_rejected();
+        }
+
         let file_name = field.file_name().map(str::to_owned);
         let data = match field.bytes().await {
             Ok(data) => data,
@@ -74,23 +94,27 @@ pub(super) async fn submit(
                 results.push(UploadResultView {
                     file_name: file_name.unwrap_or_default(),
                     status: "error".to_owned(),
-                    message: Some("Failed to read file".to_owned()),
+                    message: Some(user.tr(&state).t("import_read_failed")),
                     document_hash: None,
                 });
                 continue;
             }
         };
 
-        let outcome = library::import_file(&state, file_name, &data).await;
+        let outcome = library::import_file(&state, file_name, &data, Some(user.id)).await;
         results.push(UploadResultView {
             file_name: outcome.file_name.unwrap_or_default(),
             status: outcome.status.as_str().to_owned(),
-            message: outcome.message,
+            message: outcome.message.map(|key| user.tr(&state).t(key)),
             document_hash: outcome.document_hash,
         });
     }
 
-    let mut ctx = base_context(&user, "upload");
+    if !csrf_ok {
+        return csrf_rejected();
+    }
+
+    let mut ctx = base_context(&state, &user, "upload");
     ctx.insert("results", &results);
 
     if is_htmx(&headers) {

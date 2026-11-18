@@ -308,7 +308,7 @@ async fn cover_is_extracted_and_served() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(!bytes.is_empty());
+    assert_ne!(bytes.len(), 0);
 }
 
 #[tokio::test]

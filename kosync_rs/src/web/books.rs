@@ -1,18 +1,21 @@
-//! Shared EPUB library pages: listing, detail, cover, download, and delete.
+//! Shared EPUB library pages: listing, detail, cover, download, cover
+//! replacement, and delete.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
 use serde::{Deserialize, Serialize};
 use tower_cookies::Cookies;
+use web_mev_auth::{CsrfForm, EmptyForm};
+use web_mev_axum::RequestError;
 
-use crate::{library, state::AppState, store};
+use crate::{i18n::Tr, library, state::AppState, store};
 
 use super::{
-    authors_string, base_context, cover_hue, current_user, format_size, format_timestamp, is_htmx,
-    pluralize, render,
+    HtmlError, Viewer, authors_string, base_context, csrf_header_ok, current_user, flash_next,
+    format, format_timestamp, is_htmx, publication_tint, render, take_flash,
 };
 
 /// Number of books shown per page.
@@ -45,8 +48,8 @@ struct BookCardView {
     has_progress: bool,
     percentage: f64,
     percent: String,
-    /// Hue of the generated placeholder cover.
-    hue: u16,
+    /// Tint of the cover, for generated covers and panels.
+    tint: String,
 }
 
 /// An active filter shown as a removable chip.
@@ -158,20 +161,14 @@ impl Filters {
 
     /// Number of active filters that live in the collapsible filter panel.
     fn advanced_count(&self) -> usize {
-        [
-            &self.author,
-            &self.genre,
-            &self.series,
-            &self.language,
-            &self.status,
-        ]
-        .iter()
-        .filter(|value| !value.is_empty())
-        .count()
+        [&self.author, &self.genre, &self.series, &self.language]
+            .iter()
+            .filter(|value| !value.is_empty())
+            .count()
     }
 
     /// The active filters as removable chips.
-    fn chips(&self) -> Vec<FilterChip> {
+    fn chips(&self, tr: &Tr<'_>) -> Vec<FilterChip> {
         let mut chips = Vec::new();
         let mut push = |label: String, omit: &str| {
             chips.push(FilterChip {
@@ -180,22 +177,28 @@ impl Filters {
             });
         };
         if !self.query.is_empty() {
-            push(format!("Search: {}", self.query), "query");
+            push(tr.args("chip_search", &[("value", &self.query)]), "query");
         }
         if !self.author.is_empty() {
-            push(format!("Author: {}", self.author), "author");
+            push(tr.args("chip_author", &[("value", &self.author)]), "author");
         }
         if !self.genre.is_empty() {
-            push(format!("Genre: {}", self.genre), "genre");
+            push(tr.args("chip_genre", &[("value", &self.genre)]), "genre");
         }
         if !self.series.is_empty() {
-            push(format!("Series: {}", self.series), "series");
+            push(tr.args("chip_series", &[("value", &self.series)]), "series");
         }
         if !self.language.is_empty() {
-            push(format!("Language: {}", self.language), "language");
+            push(
+                tr.args("chip_language", &[("value", &self.language)]),
+                "language",
+            );
         }
         if !self.status.is_empty() {
-            push(format!("Status: {}", status_label(&self.status)), "status");
+            push(
+                tr.args("chip_status", &[("value", &status_label(tr, &self.status))]),
+                "status",
+            );
         }
         chips
     }
@@ -221,13 +224,13 @@ fn normalize_status(value: Option<&str>) -> String {
 }
 
 /// A human-readable label for a reading-status value.
-fn status_label(value: &str) -> &'static str {
-    match value {
-        "unread" => "Unread",
-        "in-progress" => "In progress",
-        "finished" => "Finished",
-        _ => "Any",
-    }
+fn status_label(tr: &Tr<'_>, value: &str) -> String {
+    tr.t(match value {
+        "unread" => "status_unread",
+        "in-progress" => "status_in_progress",
+        "finished" => "status_finished",
+        _ => "status_any",
+    })
 }
 
 /// Normalize a sort query parameter.
@@ -257,6 +260,9 @@ fn normalize_view(value: Option<&str>) -> String {
 #[derive(Debug, Serialize)]
 struct BookDetailView {
     document_hash: String,
+    /// Whether the viewer may replace the cover: administrators and the
+    /// book's uploader.
+    can_edit_cover: bool,
     title: String,
     authors: String,
     series: Option<String>,
@@ -280,8 +286,12 @@ struct BookDetailView {
     history_hash: Option<String>,
     series_index: String,
     isbn: Option<String>,
-    hue: u16,
+    /// Tint of the cover, for the hero panel and a generated cover.
+    tint: String,
 }
+
+/// Number of recent syncs listed on a book page.
+const BOOK_SYNCS: usize = 4;
 
 /// Maximum number of sibling books shown in the "More in this series" rail.
 const SERIES_LIMIT: i64 = 30;
@@ -320,12 +330,13 @@ pub(super) async fn list(
         .await
         .unwrap_or_default();
 
-    let books = card_views(&state, user.id, &publications).await;
+    let tr = user.tr(&state);
+    let books = card_views(&state, &tr, user.id, &publications).await;
 
-    let mut ctx = base_context(&user, "books");
+    let mut ctx = base_context(&state, &user, "books");
     ctx.insert("books", &books);
     ctx.insert("total", &total);
-    ctx.insert("total_label", &pluralize(total, "book", "books"));
+    ctx.insert("total_label", &tr.n("count_books", total, &[]));
     ctx.insert("page", &page);
     ctx.insert("total_pages", &total_pages);
     ctx.insert("has_prev", &(page > 1));
@@ -340,7 +351,7 @@ pub(super) async fn list(
     ctx.insert("view", &filters.view);
     ctx.insert("query_suffix", &filters.suffix());
     ctx.insert("clear_url", &"/books");
-    ctx.insert("active_filters", &filters.chips());
+    ctx.insert("active_filters", &filters.chips(&tr));
     ctx.insert("advanced_filter_count", &filters.advanced_count());
 
     // Facet options for the filter toolbar.
@@ -371,6 +382,7 @@ pub(super) async fn list(
 /// fetched in a single query.
 async fn card_views(
     state: &AppState,
+    tr: &Tr<'_>,
     user_id: i64,
     publications: &[store::Publication],
 ) -> Vec<BookCardView> {
@@ -383,12 +395,16 @@ async fn card_views(
     publications
         .iter()
         .zip(progress)
-        .map(|(publication, progress)| card_view(publication, progress.as_ref()))
+        .map(|(publication, progress)| card_view(tr, publication, progress.as_ref()))
         .collect()
 }
 
 /// Build a listing card for a publication and the user's progress on it.
-fn card_view(publication: &store::Publication, progress: Option<&store::Document>) -> BookCardView {
+fn card_view(
+    tr: &Tr<'_>,
+    publication: &store::Publication,
+    progress: Option<&store::Document>,
+) -> BookCardView {
     BookCardView {
         document_hash: publication.document_hash.clone(),
         title: publication.title.clone(),
@@ -396,10 +412,12 @@ fn card_view(publication: &store::Publication, progress: Option<&store::Document
         series: publication.series.clone().unwrap_or_default(),
         series_index: series_index_label(publication.series_index),
         has_thumb: publication.thumb_path.is_some(),
-        hue: cover_hue(&publication.title),
+        tint: publication_tint(publication),
         has_progress: progress.is_some(),
         percentage: progress.map_or(0.0, |doc| doc.percentage),
-        percent: progress.map_or_else(String::new, |doc| format!("{:.2}%", doc.percentage * 100.0)),
+        percent: progress.map_or_else(String::new, |doc| {
+            format::pct_precise(tr, doc.percentage, 2)
+        }),
     }
 }
 
@@ -448,8 +466,10 @@ pub(super) async fn detail(
         .await
         .unwrap_or(None);
 
+    let tr = user.tr(&state);
     let view = BookDetailView {
         document_hash: publication.document_hash.clone(),
+        can_edit_cover: may_edit(&user, &publication),
         title: publication.title.clone(),
         authors: authors_string(&publication.authors),
         series: publication.series.clone(),
@@ -459,15 +479,15 @@ pub(super) async fn detail(
         publisher: publication.publisher.clone(),
         published: publication.published.clone(),
         description: publication.description.clone(),
-        file_size: format_size(publication.file_size),
+        file_size: format::size(&tr, publication.file_size),
         created: format_timestamp(publication.created_at),
         updated: format_timestamp(publication.updated_at),
         has_cover: publication.cover_path.is_some(),
         has_progress: progress.is_some(),
         percentage: progress.as_ref().map_or(0.0, |doc| doc.percentage),
-        percent: progress
-            .as_ref()
-            .map_or_else(String::new, |doc| format!("{:.2}%", doc.percentage * 100.0)),
+        percent: progress.as_ref().map_or_else(String::new, |doc| {
+            format::pct_precise(&tr, doc.percentage, 2)
+        }),
         progress: progress
             .as_ref()
             .map_or_else(String::new, |doc| doc.progress.clone()),
@@ -480,7 +500,7 @@ pub(super) async fn detail(
         history_hash: progress.as_ref().map(|doc| doc.document_hash.clone()),
         series_index: series_index_label(publication.series_index),
         isbn: publication.isbn.clone(),
-        hue: cover_hue(&publication.title),
+        tint: publication_tint(&publication),
     };
 
     let mut series_books = Vec::new();
@@ -496,13 +516,23 @@ pub(super) async fn detail(
             .unwrap_or_default();
         // A series of one is just this book: skip the rail.
         if siblings.len() > 1 {
-            series_books = card_views(&state, user.id, &siblings).await;
+            series_books = card_views(&state, &tr, user.id, &siblings).await;
         }
     }
 
-    let mut ctx = base_context(&user, "books");
+    let sync = match &progress {
+        Some(doc) => {
+            super::document::sync_summary(&state, &tr, user.id, &doc.document_hash, BOOK_SYNCS)
+                .await
+        }
+        None => super::document::SyncSummary::default(),
+    };
+
+    let mut ctx = base_context(&state, &user, "books");
     ctx.insert("book", &view);
     ctx.insert("series_books", &series_books);
+    ctx.insert("sync", &sync);
+    take_flash(&state, &cookies, &mut ctx);
 
     render(&state, "book.html", &ctx)
 }
@@ -602,14 +632,10 @@ pub(super) async fn download(
 pub(super) async fn delete(
     State(state): State<AppState>,
     headers: HeaderMap,
-    cookies: Cookies,
     Path(document_hash): Path<String>,
+    CsrfForm { ui, .. }: CsrfForm<store::User, EmptyForm>,
 ) -> Response {
-    let Some(user) = current_user(&state, &cookies).await else {
-        return Redirect::to("/login").into_response();
-    };
-
-    if !user.is_administrator {
+    if !ui.session.user.is_administrator {
         return Redirect::to("/books").into_response();
     }
 
@@ -634,4 +660,93 @@ pub(super) async fn delete(
     } else {
         Redirect::to("/books").into_response()
     }
+}
+
+/// Whether `user` may change `publication`: administrators, and the account
+/// that uploaded it.
+fn may_edit(user: &store::User, publication: &store::Publication) -> bool {
+    user.is_administrator || publication.uploaded_by == Some(user.id)
+}
+
+/// Replace a book's cover picture (administrators and the book's uploader).
+///
+/// The form posts its `csrf_token` part before the picture, or htmx sends the
+/// token in the `X-CSRF-Token` header. Only the cover inside the `EPUB`
+/// changes, and the book's former digest stays an alias, so readers holding
+/// either version keep syncing the same progress.
+pub(super) async fn replace_cover(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    cookies: Cookies,
+    Path(document_hash): Path<String>,
+    mut multipart: Multipart,
+) -> Response {
+    let Some(user) = current_user(&state, &cookies).await else {
+        return Redirect::to("/login").into_response();
+    };
+    let Some(publication) = store::get_publication_by_hash(&state.pool, &document_hash)
+        .await
+        .unwrap_or(None)
+    else {
+        return Redirect::to("/books").into_response();
+    };
+    let back = format!("/books/{}", publication.document_hash);
+    if !may_edit(&user, &publication) {
+        return Redirect::to(&back).into_response();
+    }
+
+    let mut csrf_ok = csrf_header_ok(&user, &headers);
+    let mut image = None;
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to read cover upload part");
+                break;
+            }
+        };
+        match field.name() {
+            Some("csrf_token") => {
+                let supplied = field.text().await.unwrap_or_default();
+                csrf_ok = csrf_ok || web_mev_core::secure_eq(&user.csrf_token, &supplied);
+            }
+            Some("cover") if csrf_ok => match field.bytes().await {
+                Ok(bytes) if !bytes.is_empty() => image = Some(bytes.to_vec()),
+                Ok(_) => {}
+                Err(err) => tracing::warn!(error = %err, "failed to read cover upload"),
+            },
+            _ => {}
+        }
+    }
+    if !csrf_ok {
+        return HtmlError::from(RequestError::forbidden("invalid CSRF token")).into_response();
+    }
+
+    let Some(image) = image else {
+        return cover_result(&state, &user, &cookies, &back, Err("cover_missing_file"));
+    };
+    match library::replace_cover(&state, &publication, image).await {
+        Ok(new_hash) => {
+            let page = format!("/books/{new_hash}");
+            cover_result(&state, &user, &cookies, &page, Ok("cover_replaced"))
+        }
+        Err(key) => cover_result(&state, &user, &cookies, &back, Err(key)),
+    }
+}
+
+/// Flash the outcome of a cover replacement and go back to the book.
+fn cover_result(
+    state: &AppState,
+    viewer: &Viewer,
+    cookies: &Cookies,
+    page: &str,
+    outcome: Result<&str, &str>,
+) -> Response {
+    let (error, key) = match outcome {
+        Ok(key) => (false, key),
+        Err(key) => (true, key),
+    };
+    flash_next(state, cookies, error, &viewer.tr(state).t(key));
+    Redirect::to(page).into_response()
 }

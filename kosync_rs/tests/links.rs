@@ -28,7 +28,7 @@ async fn app_with(configure: impl FnOnce(&mut Config)) -> Router {
     let mut config = test_config(&url, &books_dir, false);
     configure(&mut config);
     let pool = init_db(&config).await.unwrap();
-    router(build_state(&config, pool))
+    router(build_state(&config, pool).unwrap())
 }
 
 /// The `self` link of the OPDS 2.0 root feed, requested from `peer` (if any)
@@ -76,7 +76,7 @@ async fn forwarded_headers_from_untrusted_clients_are_ignored() {
 
 #[tokio::test]
 async fn forwarded_headers_from_trusted_proxies_are_used() {
-    let app = app_with(|config| config.trusted_proxies = "127.0.0.1".to_owned()).await;
+    let app = app_with(|config| config.trusted_proxies = vec!["127.0.0.1".parse().unwrap()]).await;
     let headers = [
         ("host", "127.0.0.1:8090"),
         ("x-forwarded-proto", "HTTPS"),

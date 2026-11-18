@@ -11,29 +11,17 @@
 )]
 
 use axum::{
-    Form,
-    extract::{Query, State},
+    extract::State,
     response::{IntoResponse, Redirect, Response},
 };
 use serde::Deserialize;
 use tower_cookies::Cookies;
+use web_mev_auth::{CsrfForm, UiSession};
 
 use crate::{db, state::AppState, store, util::is_valid_field};
 
-use super::{base_context, current_user, render};
+use super::{Viewer, base_context, current_user, flash_next, render, take_flash};
 
-/// Query parameters carrying a flash message code between requests.
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct FlashQuery {
-    /// Error message code, if any.
-    #[serde(default)]
-    error: Option<String>,
-    /// Success message code, if any.
-    #[serde(default)]
-    notice: Option<String>,
-}
-
-/// Fields submitted by the change-your-own-password form.
 #[derive(Debug, Deserialize)]
 pub(super) struct OwnPasswordForm {
     /// The user's existing password, confirmed before any change.
@@ -52,72 +40,50 @@ pub(super) struct UserPasswordForm {
 }
 
 /// Enforce an authenticated session.
-async fn require_user(state: &AppState, cookies: &Cookies) -> Result<store::User, Response> {
+async fn require_user(state: &AppState, cookies: &Cookies) -> Result<Viewer, Response> {
     current_user(state, cookies)
         .await
         .ok_or_else(|| Redirect::to("/login").into_response())
 }
 
-/// Enforce an authenticated administrator session.
-async fn require_admin(state: &AppState, cookies: &Cookies) -> Result<store::User, Response> {
-    let Some(user) = current_user(state, cookies).await else {
-        return Err(Redirect::to("/login").into_response());
+/// Return to the settings page, showing the message for `outcome`: a notice
+/// code on success, an error code otherwise.
+fn back(
+    state: &AppState,
+    viewer: &Viewer,
+    cookies: &Cookies,
+    outcome: Result<&str, &str>,
+) -> Response {
+    let (error, code) = match outcome {
+        Ok(code) => (false, code),
+        Err(code) => (true, code),
     };
-    if user.is_administrator {
-        Ok(user)
-    } else {
-        Err(Redirect::to("/").into_response())
-    }
+    flash_next(state, cookies, error, &viewer.tr(state).t(flash_key(code)));
+    Redirect::to("/settings").into_response()
 }
 
-/// Redirect back to the settings page with an error flash code.
-fn redirect_error(code: &str) -> Response {
-    Redirect::to(&format!("/settings?error={code}")).into_response()
-}
-
-/// Redirect back to the settings page with a success flash code.
-fn redirect_notice(code: &str) -> Response {
-    Redirect::to(&format!("/settings?notice={code}")).into_response()
-}
-
-/// Map flash codes from the query string to a rendered message.
-fn flash_message(query: &FlashQuery) -> Option<(&'static str, &'static str)> {
-    if let Some(code) = &query.error {
-        let text = match code.as_str() {
-            "wrong-current" => "Your current password is incorrect.",
-            "invalid" => "Enter a non-empty password.",
-            "protected" => "The built-in admin account cannot be modified.",
-            "missing" => "That user no longer exists.",
-            "db" => "Something went wrong. Please try again.",
-            _ => return None,
-        };
-        return Some(("error", text));
+/// The translation key of the message for a flash code.
+fn flash_key(code: &str) -> &'static str {
+    match code {
+        "wrong-current" => "flash_settings_wrong-current",
+        "invalid" => "flash_settings_invalid",
+        "protected" => "flash_protected",
+        "missing" => "flash_missing",
+        "password-changed" => "flash_password-changed",
+        "password-reset" => "flash_password-reset",
+        "language-saved" => "flash_language-saved",
+        _ => "error_generic",
     }
-
-    if let Some(code) = &query.notice {
-        let text = match code.as_str() {
-            "password-changed" => "Password changed.",
-            "password-reset" => "Password reset.",
-            _ => return None,
-        };
-        return Some(("notice", text));
-    }
-
-    None
 }
 
 /// Render the settings page.
-pub(super) async fn form(
-    State(state): State<AppState>,
-    Query(query): Query<FlashQuery>,
-    cookies: Cookies,
-) -> Response {
+pub(super) async fn form(State(state): State<AppState>, cookies: Cookies) -> Response {
     let user = match require_user(&state, &cookies).await {
         Ok(user) => user,
         Err(response) => return response,
     };
 
-    let mut ctx = base_context(&user, "settings");
+    let mut ctx = base_context(&state, &user, "settings");
     if user.is_administrator {
         match store::list_users(&state.pool).await {
             Ok(users) => {
@@ -130,68 +96,131 @@ pub(super) async fn form(
             }
             Err(err) => {
                 err.log();
-                ctx.insert("error", "Something went wrong. Please try again.");
+                ctx.insert("error", &user.tr(&state).t("error_generic"));
             }
         }
     }
-    if let Some((kind, text)) = flash_message(&query) {
-        ctx.insert(kind, text);
-    }
+    ctx.insert(
+        "language_choice",
+        &user.user.locale.clone().unwrap_or_default(),
+    );
+    let all_languages: Vec<super::LanguageChoice> = state
+        .i18n
+        .supported()
+        .iter()
+        .map(|locale| super::LanguageChoice {
+            code: locale.code(),
+            name: state.i18n.tr(locale).t("language_name"),
+        })
+        .collect();
+    ctx.insert("all_languages", &all_languages);
+    take_flash(&state, &cookies, &mut ctx);
     render(&state, "settings.html", &ctx)
 }
 
-/// Change the signed-in user's own password.
+/// Change the signed-in user's own password. Other browser sessions of the
+/// user are signed out; this one stays.
 pub(super) async fn change_own(
     State(state): State<AppState>,
-    cookies: Cookies,
-    Form(form): Form<OwnPasswordForm>,
+    CsrfForm { ui, form }: CsrfForm<store::User, OwnPasswordForm>,
 ) -> Response {
-    let user = match require_user(&state, &cookies).await {
-        Ok(user) => user,
-        Err(response) => return response,
-    };
+    let UiSession { session, cookies } = ui;
+    let user = Viewer::new(&state, session);
 
     if !is_valid_field(&form.new_password) {
-        return redirect_error("invalid");
+        return back(&state, &user, &cookies, Err("invalid"));
     }
-    if db::md5_hex(&form.current_password) != user.password_hash {
-        return redirect_error("wrong-current");
+    if !web_mev_core::secure_eq(&db::md5_hex(&form.current_password), &user.password_hash) {
+        return back(&state, &user, &cookies, Err("wrong-current"));
     }
 
     let hash = db::md5_hex(&form.new_password);
-    match store::set_password(&state.pool, &user.username, &hash).await {
-        Ok(true) => redirect_notice("password-changed"),
-        Ok(false) => redirect_error("missing"),
+    let Ok(web_hash) = state.hash_web_password(&form.new_password).await else {
+        return back(&state, &user, &cookies, Err("db"));
+    };
+    let outcome = match store::set_password(
+        &state.pool,
+        &user.username,
+        &hash,
+        &web_hash,
+        Some(user.session_id),
+    )
+    .await
+    {
+        Ok(true) => Ok("password-changed"),
+        Ok(false) => Err("missing"),
         Err(err) => {
             err.log();
-            redirect_error("db")
+            Err("db")
         }
-    }
+    };
+    back(&state, &user, &cookies, outcome)
 }
 
-/// Reset another user's password (administrator only).
+/// Reset another user's password (administrator only). That user is signed
+/// out of the web UI everywhere.
 pub(super) async fn change_user(
     State(state): State<AppState>,
-    cookies: Cookies,
-    Form(form): Form<UserPasswordForm>,
+    CsrfForm { ui, form }: CsrfForm<store::User, UserPasswordForm>,
 ) -> Response {
-    if let Err(response) = require_admin(&state, &cookies).await {
-        return response;
+    let UiSession { session, cookies } = ui;
+    if !session.user.is_administrator {
+        return Redirect::to("/").into_response();
     }
+    let user = Viewer::new(&state, session);
     if form.username == "admin" {
-        return redirect_error("protected");
+        return back(&state, &user, &cookies, Err("protected"));
     }
     if !is_valid_field(&form.password) {
-        return redirect_error("invalid");
+        return back(&state, &user, &cookies, Err("invalid"));
     }
 
     let hash = db::md5_hex(&form.password);
-    match store::set_password(&state.pool, &form.username, &hash).await {
-        Ok(true) => redirect_notice("password-reset"),
-        Ok(false) => redirect_error("missing"),
+    let Ok(web_hash) = state.hash_web_password(&form.password).await else {
+        return back(&state, &user, &cookies, Err("db"));
+    };
+    let outcome =
+        match store::set_password(&state.pool, &form.username, &hash, &web_hash, None).await {
+            Ok(true) => Ok("password-reset"),
+            Ok(false) => Err("missing"),
+            Err(err) => {
+                err.log();
+                Err("db")
+            }
+        };
+    back(&state, &user, &cookies, outcome)
+}
+
+/// Field submitted by the language form.
+#[derive(Debug, Deserialize)]
+pub(super) struct LanguageForm {
+    /// A supported language code, or empty for automatic.
+    #[serde(default)]
+    language: String,
+}
+
+/// Save the signed-in user's language, or clear it for automatic. A chosen
+/// language is also remembered by this browser, for pages before sign-in.
+pub(super) async fn change_language(
+    State(state): State<AppState>,
+    CsrfForm { ui, form }: CsrfForm<store::User, LanguageForm>,
+) -> Response {
+    let UiSession { session, cookies } = ui;
+    let user_id = session.user.id;
+    let choice = state.i18n.parse(form.language.trim());
+    let code = choice.as_ref().map(web_mev_i18n::LocaleCode::code);
+    let saved = store::set_locale(&state.pool, user_id, code.as_deref()).await;
+    if let Some(locale) = &choice {
+        super::remember_locale(&state, &cookies, locale);
+    }
+    // The message is shown in the language just picked.
+    let mut user = Viewer::new(&state, session);
+    user.locale = state.i18n.resolve(code.as_deref());
+    match saved {
+        Ok(()) => back(&state, &user, &cookies, Ok("language-saved")),
         Err(err) => {
             err.log();
-            redirect_error("db")
+            back(&state, &user, &cookies, Err("db"))
         }
     }
 }

@@ -6,7 +6,7 @@ mod common;
 
 use axum::http::StatusCode;
 
-use common::{app, login, register_plaintext, send_html};
+use common::{app, follow_flash, login, register_plaintext, send_html};
 
 /// Content type for HTML form submissions.
 const FORM: &str = "application/x-www-form-urlencoded";
@@ -33,11 +33,11 @@ async fn user_can_change_own_password() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let location = headers.get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("notice=password-changed"), "{location}");
+    let page = follow_flash(&app, &cookie, &headers).await;
+    assert!(page.contains("Password changed."), "{page}");
 
     let new_cookie = login(&app, "alice", "newpass").await;
-    assert!(!new_cookie.is_empty());
+    assert_ne!(new_cookie.len(), 0);
 }
 
 #[tokio::test]
@@ -55,12 +55,15 @@ async fn wrong_current_password_is_rejected() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let location = headers.get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("error=wrong-current"), "{location}");
+    let page = follow_flash(&app, &cookie, &headers).await;
+    assert!(
+        page.contains("Your current password is incorrect."),
+        "{page}"
+    );
 
     // The old password still works and the rejected one does not.
     let cookie = login(&app, "alice", "secret").await;
-    assert!(!cookie.is_empty());
+    assert_ne!(cookie.len(), 0);
     let (_, headers, _) = send_html(
         &app,
         "POST",
@@ -91,7 +94,7 @@ async fn non_admin_cannot_reset_another_user() {
 
     // Bob's password is unchanged.
     let bob = login(&app, "bob", "secret").await;
-    assert!(!bob.is_empty());
+    assert_ne!(bob.len(), 0);
 }
 
 #[tokio::test]
@@ -109,11 +112,11 @@ async fn admin_can_reset_another_user_from_settings() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let location = headers.get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("notice=password-reset"), "{location}");
+    let page = follow_flash(&app, &admin, &headers).await;
+    assert!(page.contains("Password reset."), "{page}");
 
     let cookie = login(&app, "alice", "reset").await;
-    assert!(!cookie.is_empty());
+    assert_ne!(cookie.len(), 0);
 }
 
 #[tokio::test]
@@ -130,11 +133,11 @@ async fn settings_admin_form_cannot_reset_admin() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let location = headers.get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("error=protected"), "{location}");
+    let page = follow_flash(&app, &admin, &headers).await;
+    assert!(page.contains("cannot be modified"), "{page}");
 
     let again = login(&app, "admin", "admin").await;
-    assert!(!again.is_empty());
+    assert_ne!(again.len(), 0);
 }
 
 #[tokio::test]

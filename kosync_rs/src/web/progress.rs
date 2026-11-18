@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tower_cookies::Cookies;
 
-use crate::{state::AppState, store};
+use crate::{i18n::Tr, state::AppState, store};
 
 use super::{
-    BookLinkView, base_context, book_link, cover_hue, current_user, format_timestamp, human_date,
-    is_htmx, pluralize, render,
+    BookLinkView, base_context, book_link, current_user, format, format_timestamp, is_htmx, render,
+    title_tint,
 };
 
 /// Dashboard query parameters.
@@ -28,8 +28,13 @@ pub(super) struct ProgressQuery {
 /// Number of documents shown per page.
 const PER_PAGE: i64 = 20;
 
-/// Number of books shown in the "Continue reading" rail.
-const CONTINUE_LIMIT: usize = 8;
+/// Number of in-progress books listed beside the Continue panel.
+const ALSO_READING: usize = 2;
+/// Number of books on the dashboard's "Recently added" shelf.
+const RECENT_BOOKS: i64 = 6;
+
+/// Number of books gathered for the "Continue reading" panel.
+const CONTINUE_LIMIT: usize = 4;
 
 /// Number of recent unfinished documents scanned to fill the rail.
 const CONTINUE_SCAN: i64 = 24;
@@ -47,8 +52,8 @@ struct DocumentView {
     fallback_title: String,
     /// Fallback author (captured metadata) when no book matches.
     fallback_author: String,
-    /// Hue of the generated placeholder cover for unmatched documents.
-    hue: u16,
+    /// Tint of the generated placeholder cover for unmatched documents.
+    tint: String,
 }
 
 /// An in-progress document shown in the dashboard's "Continue reading" rail.
@@ -60,19 +65,20 @@ struct ContinueView {
     title: String,
     author: String,
     thumb_hash: Option<String>,
-    hue: u16,
+    tint: String,
     percentage: f64,
     synced: String,
+    device: String,
 }
 
-/// One day's bar in the dashboard activity sparkline.
+/// One day in the dashboard activity heatmap.
 #[derive(Debug, Serialize)]
-struct BarView {
-    x: i64,
-    y: String,
-    height: String,
+struct HeatCell {
+    /// Intensity class: `l0`..`l3`, or `pad` for the days before the first
+    /// week starts.
+    level: &'static str,
+    /// The day and its sync count, for the tooltip.
     label: String,
-    empty: bool,
 }
 
 /// Dashboard statistics prepared for rendering.
@@ -83,43 +89,43 @@ struct StatsView {
     syncs_7d: i64,
     syncs_30d: i64,
     devices_30d: i64,
-    bars: Vec<BarView>,
+    heat: Vec<HeatCell>,
 }
 
-/// Width of one sparkline slot in SVG user units.
-const BAR_SLOT: i64 = 10;
-/// Drawable sparkline height in SVG user units.
-const BAR_HEIGHT: f64 = 44.0;
-
-/// Lossless-enough conversion of a small count to `f64` for chart geometry.
-fn count_f64(value: i64) -> f64 {
-    f64::from(i32::try_from(value).unwrap_or(i32::MAX))
-}
-
-/// Lay out the daily sync counts as sparkline bars.
-fn activity_bars(daily: &[i64], first_day: i64) -> Vec<BarView> {
+/// Lay out daily sync counts as heatmap cells, one column per week.
+///
+/// Columns start on Monday, so leading padding cells line the first day up
+/// with its weekday row. Counts are bucketed into four levels relative to the
+/// busiest day.
+fn heat_cells(tr: &Tr<'_>, daily: &[i64], first_day: i64) -> Vec<HeatCell> {
     let max = daily.iter().copied().max().unwrap_or(0).max(1);
-    let mut bars = Vec::with_capacity(daily.len());
-    let mut x = 0;
+    // Day 0 of the Unix epoch was a Thursday: three days after a Monday.
+    let padding = usize::try_from((first_day + 3).rem_euclid(7)).unwrap_or(0);
+    let mut cells: Vec<HeatCell> = (0..padding)
+        .map(|_| HeatCell {
+            level: "pad",
+            label: String::new(),
+        })
+        .collect();
     for (day, &count) in (first_day..).zip(daily) {
-        let height = if count == 0 {
-            2.0
-        } else {
-            (count_f64(count) / count_f64(max) * BAR_HEIGHT).max(4.0)
+        let level = match count {
+            0 => "l0",
+            c if c * 3 <= max => "l1",
+            c if c * 3 <= max * 2 => "l2",
+            _ => "l3",
         };
         let date = OffsetDateTime::from_unix_timestamp(day * 86_400)
-            .map(human_date)
+            .map(|day| format::human_date(tr, day))
             .unwrap_or_default();
-        bars.push(BarView {
-            x,
-            y: format!("{:.1}", BAR_HEIGHT + 4.0 - height),
-            height: format!("{height:.1}"),
-            label: format!("{date}: {}", pluralize(count, "sync", "syncs")),
-            empty: count == 0,
+        cells.push(HeatCell {
+            level,
+            label: tr.args(
+                "progress_heat_cell",
+                &[("date", &date), ("syncs", &tr.n("count_syncs", count, &[]))],
+            ),
         });
-        x += BAR_SLOT;
     }
-    bars
+    cells
 }
 
 /// An active filter shown as a removable chip.
@@ -207,22 +213,22 @@ impl Filters {
     }
 
     /// The active filters as removable chips.
-    fn chips(&self) -> Vec<FilterChip> {
+    fn chips(&self, tr: &Tr<'_>) -> Vec<FilterChip> {
         let mut chips = Vec::new();
         if !self.query.is_empty() {
             chips.push(FilterChip {
-                label: format!("Search: {}", self.query),
+                label: tr.args("chip_search", &[("value", &self.query)]),
                 href: self.href_without("query"),
             });
         }
         if !self.status.is_empty() {
-            let label = if self.status == "finished" {
-                "Finished"
+            let label = tr.t(if self.status == "finished" {
+                "status_finished"
             } else {
-                "In progress"
-            };
+                "status_in_progress"
+            });
             chips.push(FilterChip {
-                label: format!("Status: {label}"),
+                label: tr.args("chip_status", &[("value", &label)]),
                 href: self.href_without("status"),
             });
         }
@@ -264,7 +270,7 @@ fn url_encode(value: &str) -> String {
 }
 
 /// Build a document view, resolving any matching publication.
-async fn document_view(state: &AppState, doc: store::Document) -> DocumentView {
+async fn document_view(state: &AppState, tr: &Tr<'_>, doc: store::Document) -> DocumentView {
     let book = store::find_publication_for_document(&state.pool, &doc)
         .await
         .unwrap_or(None)
@@ -277,13 +283,14 @@ async fn document_view(state: &AppState, doc: store::Document) -> DocumentView {
         .unwrap_or_default();
     let fallback_author = doc.authors.clone().unwrap_or_default();
 
+    let placeholder = if fallback_title.is_empty() {
+        doc.document_hash.clone()
+    } else {
+        fallback_title.clone()
+    };
     DocumentView {
-        hue: cover_hue(if fallback_title.is_empty() {
-            &doc.document_hash
-        } else {
-            &fallback_title
-        }),
-        percent: format!("{:.2}%", doc.percentage * 100.0),
+        tint: title_tint(&placeholder),
+        percent: format::pct_precise(tr, doc.percentage, 2),
         synced: format_timestamp(doc.timestamp),
         document_hash: doc.document_hash,
         percentage: doc.percentage,
@@ -328,15 +335,16 @@ pub(super) async fn progress_list(
         .await
         .unwrap_or_default();
 
+    let tr = user.tr(&state);
     let mut views = Vec::with_capacity(documents.len());
     for doc in documents {
-        views.push(document_view(&state, doc).await);
+        views.push(document_view(&state, &tr, doc).await);
     }
 
-    let mut ctx = base_context(&user, "progress");
+    let mut ctx = base_context(&state, &user, "progress");
     ctx.insert("documents", &views);
     ctx.insert("total", &total);
-    ctx.insert("total_label", &pluralize(total, "document", "documents"));
+    ctx.insert("total_label", &tr.n("count_documents", total, &[]));
     ctx.insert("page", &page);
     ctx.insert("total_pages", &total_pages);
     ctx.insert("has_prev", &(page > 1));
@@ -346,7 +354,7 @@ pub(super) async fn progress_list(
     ctx.insert("sort", &filters.sort);
     ctx.insert("query_suffix", &filters.suffix());
     ctx.insert("clear_url", &"/");
-    ctx.insert("active_filters", &filters.chips());
+    ctx.insert("active_filters", &filters.chips(&tr));
     if page > 1 {
         ctx.insert("prev_page", &(page - 1));
     }
@@ -362,15 +370,28 @@ pub(super) async fn progress_list(
     let show_dashboard = page == 1 && filters.query.is_empty() && filters.status.is_empty();
     ctx.insert("show_dashboard", &show_dashboard);
     if show_dashboard {
-        ctx.insert("stats", &stats_view(&state, user.id).await);
-        ctx.insert("continue_reading", &continue_reading(&state, user.id).await);
+        ctx.insert("stats", &stats_view(&state, &tr, user.id).await);
+        let mut reading = continue_reading(&state, &tr, user.id).await.into_iter();
+        if let Some(lead) = reading.next() {
+            ctx.insert("continue_lead", &lead);
+        }
+        let also: Vec<ContinueView> = reading.by_ref().take(ALSO_READING).collect();
+        ctx.insert("also_reading", &also);
+        ctx.insert("more_reading", &reading.next().is_some());
+        let recent: Vec<BookLinkView> = store::list_recent_publications(&state.pool, RECENT_BOOKS)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(book_link)
+            .collect();
+        ctx.insert("recent_books", &recent);
     }
 
     render(&state, "progress.html", &ctx)
 }
 
 /// Load and lay out the dashboard statistics.
-async fn stats_view(state: &AppState, user_id: i64) -> StatsView {
+async fn stats_view(state: &AppState, tr: &Tr<'_>, user_id: i64) -> StatsView {
     let summary = store::reading_stats(
         &state.pool,
         user_id,
@@ -384,12 +405,12 @@ async fn stats_view(state: &AppState, user_id: i64) -> StatsView {
         syncs_7d: summary.syncs_7d,
         syncs_30d: summary.syncs_30d,
         devices_30d: summary.devices_30d,
-        bars: activity_bars(&summary.daily, summary.first_day),
+        heat: heat_cells(tr, &summary.daily, summary.first_day),
     }
 }
 
 /// The most recently synced unfinished documents that have a readable title.
-async fn continue_reading(state: &AppState, user_id: i64) -> Vec<ContinueView> {
+async fn continue_reading(state: &AppState, tr: &Tr<'_>, user_id: i64) -> Vec<ContinueView> {
     let filter = store::DocumentFilter {
         search: None,
         finished: Some(false),
@@ -402,7 +423,7 @@ async fn continue_reading(state: &AppState, user_id: i64) -> Vec<ContinueView> {
 
     let mut items = Vec::new();
     for doc in documents {
-        let view = document_view(state, doc).await;
+        let view = document_view(state, tr, doc).await;
         let item = match &view.book {
             Some(book) => ContinueView {
                 book_hash: Some(book.document_hash.clone()),
@@ -410,19 +431,21 @@ async fn continue_reading(state: &AppState, user_id: i64) -> Vec<ContinueView> {
                 title: book.title.clone(),
                 author: book.author.clone(),
                 thumb_hash: book.has_thumb.then(|| book.document_hash.clone()),
-                hue: book.hue,
+                tint: book.tint.clone(),
                 percentage: view.percentage,
                 synced: view.synced.clone(),
+                device: view.device.clone(),
             },
             None if !view.fallback_title.is_empty() => ContinueView {
                 book_hash: None,
                 document_hash: view.document_hash.clone(),
-                hue: cover_hue(&view.fallback_title),
+                tint: title_tint(&view.fallback_title),
                 title: view.fallback_title.clone(),
                 author: view.fallback_author.clone(),
                 thumb_hash: None,
                 percentage: view.percentage,
                 synced: view.synced.clone(),
+                device: view.device.clone(),
             },
             None => continue,
         };
@@ -432,4 +455,29 @@ async fn continue_reading(state: &AppState, user_id: i64) -> Vec<ContinueView> {
         }
     }
     items
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use web_mev_i18n::LocaleCode;
+
+    use super::heat_cells;
+    use crate::i18n::I18n;
+
+    #[test]
+    fn heatmap_weeks_start_on_monday_and_levels_scale_to_the_busiest_day() {
+        let i18n = I18n::load("en").unwrap();
+        let tr = i18n.tr(&LocaleCode::try_from("en").unwrap());
+        // Unix day 4 was Monday 5 January 1970; day 6 a Wednesday.
+        let cells = heat_cells(&tr, &[0, 1, 2, 3, 6], 6);
+        let levels: Vec<&str> = cells.iter().map(|cell| cell.level).collect();
+        assert_eq!(levels, ["pad", "pad", "l0", "l1", "l1", "l2", "l3"]);
+        assert_eq!(cells[0].label, "");
+        assert!(cells[3].label.contains("1 sync"), "{}", cells[3].label);
+
+        let monday = heat_cells(&tr, &[0; 7], 4);
+        assert_eq!(monday.len(), 7, "a Monday start needs no padding");
+    }
 }

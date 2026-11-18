@@ -1,10 +1,13 @@
 //! Database connection setup, migrations, and admin seeding.
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-use std::path::Path;
-use std::str::FromStr;
+use sqlx::migrate::Migrator;
+use sqlx::sqlite::SqlitePool;
+use web_mev_sqlite::DbTuning;
 
 use crate::config::{Config, ConfigError};
+
+/// The embedded schema migrations.
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// Password earlier versions gave the `admin` user when none was configured.
 const OLD_DEFAULT_ADMIN_PASSWORD: &str = "admin";
@@ -19,7 +22,8 @@ pub(crate) fn md5_hex(input: &str) -> String {
     format!("{digest:x}")
 }
 
-/// Connect to the `SQLite` database, run migrations, and seed the admin user
+/// Connect to the `SQLite` database (WAL, full sync, foreign keys), run
+/// migrations, and seed the admin user
 /// if the database has no administrator.
 ///
 /// # Errors
@@ -29,44 +33,11 @@ pub(crate) fn md5_hex(input: &str) -> String {
 pub(crate) async fn init(
     config: &Config,
 ) -> Result<SqlitePool, Box<dyn std::error::Error + Send + Sync>> {
-    ensure_parent_dir(&config.database_url)?;
-
-    let options = SqliteConnectOptions::from_str(&config.database_url)?
-        .create_if_missing(true)
-        .foreign_keys(true);
-
-    let pool = SqlitePoolOptions::new().connect_with(options).await?;
-
-    run_migrations(&pool).await?;
+    let pool =
+        web_mev_sqlite::connect_with(&config.database_url, &MIGRATOR, &DbTuning::default()).await?;
     seed_admin(&pool, config.admin_password.as_deref()).await?;
 
     Ok(pool)
-}
-
-/// Create the parent directory for a file-backed `SQLite` database, if needed.
-fn ensure_parent_dir(database_url: &str) -> std::io::Result<()> {
-    let path = database_url
-        .strip_prefix("sqlite://")
-        .or_else(|| database_url.strip_prefix("sqlite:"))
-        .unwrap_or(database_url);
-
-    if path.is_empty() || path.starts_with(":memory:") {
-        return Ok(());
-    }
-
-    if let Some(parent) = Path::new(path)
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    Ok(())
-}
-
-/// Run pending SQL migrations.
-async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::migrate::MigrateError> {
-    sqlx::migrate!("./migrations").run(pool).await
 }
 
 /// Create the `admin` user if the database has no administrator.
@@ -92,9 +63,15 @@ async fn seed_admin(
         })?;
         sqlx::query(
             "INSERT INTO users (username, password_hash, is_active, is_administrator) VALUES ('admin', ?, 1, 1)
-             ON CONFLICT (username) DO UPDATE SET password_hash = excluded.password_hash, is_active = 1, is_administrator = 1",
+             ON CONFLICT (username) DO UPDATE SET password_hash = excluded.password_hash, web_password_hash = NULL, is_active = 1, is_administrator = 1",
         )
         .bind(md5_hex(password))
+        .execute(pool)
+        .await?;
+        // A taken-over account keeps none of its former owner's sessions.
+        sqlx::query(
+            "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = 'admin')",
+        )
         .execute(pool)
         .await?;
     }

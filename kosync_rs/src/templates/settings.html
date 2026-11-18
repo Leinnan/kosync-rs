@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(key="nav_settings") }}{% endblock title %}
+
+{% block content %}
+<div class="page-header">
+  <hgroup>
+    <h1>{{ t(key="nav_settings") }}</h1>
+    <p>{{ t(key="settings_lead") }}</p>
+  </hgroup>
+</div>
+
+{{<flash error={error | default(value="")} notice={notice | default(value="")}/>}}
+
+<div class="settings-layout">
+  <nav class="settings-nav" aria-label="{{ t(key="settings_sections_aria") }}">
+    <a href="#account">{{<icon name="key"/>}}{{ t(key="settings_account") }}</a>
+    <a href="#language">{{<icon name="globe"/>}}{{ t(key="settings_language") }}</a>
+    <a href="#appearance">{{<icon name="sun"/>}}{{ t(key="settings_appearance") }}</a>
+    {% if is_admin %}<a href="#admin">{{<icon name="shield"/>}}{{ t(key="settings_administration") }}</a>{% endif %}
+  </nav>
+
+  <div>
+    <section class="card" id="account" aria-labelledby="account-heading">
+      <h2 id="account-heading" class="card-title">{{<icon name="key"/>}}{{ t(key="settings_change_password") }}</h2>
+      <form class="form-narrow" method="post" action="/settings/password"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>{{ t(key="settings_current_password") }}
+          <input type="password" name="current_password" required autocomplete="current-password">
+        </label>
+        <label for="new-password">{{ t(key="settings_new_password") }}</label>
+        <input id="new-password" type="password" name="new_password" required autocomplete="new-password">
+        <div class="strength" data-strength="new-password" data-score="0" hidden aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <small class="field-hint">{{ t(key="settings_password_hint") }}</small>
+        <button type="submit">{{ t(key="settings_change_password_submit") }}</button>
+      </form>
+    </section>
+
+    <section class="card" id="language" aria-labelledby="language-heading">
+      <h2 id="language-heading" class="card-title">{{<icon name="globe"/>}}{{ t(key="settings_language") }}</h2>
+      <form class="form-narrow" method="post" action="/settings/language"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>{{ t(key="settings_language_label") }}
+          <select name="language">
+            <option value="" {% if not language_choice %}selected{% endif %}>{{ t(key="settings_language_auto") }}</option>
+            {% for language in all_languages %}
+            <option value="{{ language.code }}" lang="{{ language.code }}" {% if language_choice == language.code %}selected{% endif %}>{{ language.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <small class="field-hint">{{ t(key="settings_language_hint") }}</small>
+        <button type="submit">{{ t(key="settings_save") }}</button>
+      </form>
+    </section>
+
+    <section class="card" id="appearance" aria-labelledby="appearance-heading">
+      <h2 id="appearance-heading" class="card-title">{{<icon name="sun"/>}}{{ t(key="settings_appearance") }}</h2>
+      <fieldset class="theme-options">
+        <legend class="visually-hidden">{{ t(key="nav_theme_aria") }}</legend>
+        <label class="theme-option"><input type="radio" name="theme-choice" value="auto">{{<icon name="monitor"/>}}{{ t(key="settings_theme_system") }}</label>
+        <label class="theme-option"><input type="radio" name="theme-choice" value="light">{{<icon name="sun"/>}}{{ t(key="settings_theme_light") }}</label>
+        <label class="theme-option"><input type="radio" name="theme-choice" value="dark">{{<icon name="moon"/>}}{{ t(key="settings_theme_dark") }}</label>
+      </fieldset>
+      <small class="field-hint" style="margin-top: 0.75rem">{{ t(key="settings_theme_hint") }}</small>
+    </section>
+
+    {% if is_admin %}
+    <section class="card" id="admin" aria-labelledby="admin-heading">
+      <h2 id="admin-heading" class="card-title">{{<icon name="shield"/>}}{{ t(key="settings_reset_other") }}</h2>
+      {% if targets %}
+      <form class="form-narrow" method="post" action="/settings/user-password"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>{{ t(key="settings_user") }}
+          <select name="username" required>
+            {% for target in targets %}
+            <option value="{{ target }}">{{ target }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>{{ t(key="settings_new_password") }}
+          <input type="password" name="password" required autocomplete="new-password">
+        </label>
+        <button type="submit">{{ t(key="settings_reset_submit") }}</button>
+      </form>
+      <p class="muted"><small>{{ t(key="settings_more_controls_html") | safe }}</small></p>
+      {% else %}
+      <p class="muted">{{ t(key="settings_no_accounts_html") | safe }}</p>
+      {% endif %}
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock content %}

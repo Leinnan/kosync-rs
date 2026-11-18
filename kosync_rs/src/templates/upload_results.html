@@ -1,0 +1,34 @@
+{% if results %}
+<section class="card" aria-labelledby="results-heading">
+  <h2 id="results-heading" class="card-title">{{<icon name="check"/>}}{{ t(key="common_results") }}</h2>
+  <ul class="result-list">
+    {% for result in results %}
+    <li>
+      {% if result.status == "imported" %}
+        <span class="result-icon success">{{<icon name="check"/>}}</span>
+      {% elif result.status == "duplicate" %}
+        <span class="result-icon warning">{{<icon name="copy"/>}}</span>
+      {% else %}
+        <span class="result-icon error">{{<icon name="x"/>}}</span>
+      {% endif %}
+      <span class="result-text">
+        <strong>{{ result.file_name }}</strong>
+        <small>
+          {% if result.status == "imported" %}{{ t(key="upload_imported") }}{% elif result.status == "duplicate" %}{{ t(key="upload_duplicate") }}{% else %}{{ t(key="upload_failed") }}{% endif %}{% if result.message %} · {{ result.message }}{% endif %}
+        </small>
+      </span>
+      {% if result.status == "imported" %}
+        <span class="badge success">{{ t(key="upload_badge_imported") }}</span>
+      {% elif result.status == "duplicate" %}
+        <span class="badge warning">{{ t(key="upload_badge_duplicate") }}</span>
+      {% else %}
+        <span class="badge error">{{ t(key="upload_badge_error") }}</span>
+      {% endif %}
+      {% if result.document_hash and result.status != "error" %}
+        <a href="/books/{{ result.document_hash }}" class="history-link">{{ t(key="upload_open") }}</a>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}

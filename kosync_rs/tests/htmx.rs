@@ -43,9 +43,9 @@ async fn htmx_asset_is_served() {
             .unwrap()
             .to_str()
             .unwrap()
-            .starts_with("application/javascript")
+            .starts_with("text/javascript")
     );
-    assert!(!bytes.is_empty());
+    assert_ne!(bytes.len(), 0);
 }
 
 #[tokio::test]

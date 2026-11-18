@@ -45,6 +45,22 @@ pub(crate) struct User {
     pub(crate) is_administrator: bool,
     /// Whether the user may upload books to the shared library.
     pub(crate) can_upload: bool,
+    /// The language the user picked, such as `pl`; `None` means automatic.
+    pub(crate) locale: Option<String>,
+}
+
+impl web_mev_auth::SessionUser for User {
+    const SESSION_SQL: &'static str = web_mev_auth::session_sql!(
+        columns: "u.id, u.username, u.password_hash, u.is_active, u.is_administrator, u.can_upload, u.locale",
+        joins: "",
+        active: "u.is_active = 1"
+    );
+    const CREDENTIAL_SQL: &'static str =
+        "SELECT web_password_hash FROM users WHERE id = ? AND is_active = 1";
+    // Accounts without a web password yet sign in through the MD5 upgrade in
+    // `web::auth`, so they are left out here.
+    const LOGIN_SQL: &'static str = "SELECT id, web_password_hash FROM users
+         WHERE username = ? AND is_active = 1 AND web_password_hash IS NOT NULL";
 }
 
 impl User {
@@ -141,6 +157,8 @@ pub(crate) struct DocumentTimeline {
 pub(crate) enum StoreError {
     /// A user with this username already exists.
     Exists,
+    /// The record changed since it was read, for example by a concurrent edit.
+    Stale,
     /// An underlying database error occurred.
     Db(sqlx::Error),
 }
@@ -164,12 +182,15 @@ impl StoreError {
         self.log();
         match self {
             Self::Exists => ApiError::new(ErrorCode::UserExists),
-            Self::Db(_) => ApiError::new(ErrorCode::Internal),
+            Self::Stale | Self::Db(_) => ApiError::new(ErrorCode::Internal),
         }
     }
 }
 
 /// Create a new user with the given (pre-hashed) password.
+///
+/// `password_hash` is the MD5 `KOReader` sends. `web_password_hash` is the
+/// Argon2id hash for the web UI, unknown when `KOReader` registered the account.
 ///
 /// # Errors
 ///
@@ -179,15 +200,19 @@ pub(crate) async fn create_user(
     pool: &SqlitePool,
     username: &str,
     password_hash: &str,
+    web_password_hash: Option<&str>,
     can_upload: bool,
 ) -> Result<(), StoreError> {
     if get_user(pool, username).await?.is_some() {
         return Err(StoreError::Exists);
     }
 
-    sqlx::query("INSERT INTO users (username, password_hash, can_upload) VALUES (?, ?, ?)")
+    sqlx::query(
+        "INSERT INTO users (username, password_hash, web_password_hash, can_upload) VALUES (?, ?, ?, ?)",
+    )
         .bind(username)
         .bind(password_hash)
+        .bind(web_password_hash)
         .bind(can_upload)
         .execute(pool)
         .await?;
@@ -205,7 +230,7 @@ pub(crate) async fn get_user(
     username: &str,
 ) -> Result<Option<User>, StoreError> {
     sqlx::query_as::<_, User>(
-        "SELECT id, username, password_hash, is_active, is_administrator, can_upload FROM users WHERE username = ?",
+        "SELECT id, username, password_hash, is_active, is_administrator, can_upload, locale FROM users WHERE username = ?",
     )
     .bind(username)
     .fetch_optional(pool)
@@ -238,6 +263,10 @@ pub(crate) struct ProgressInput<'a> {
 /// Insert or update the stored progress for a document and record an immutable
 /// event in the progress history.
 ///
+/// An identifier that belongs to a library publication (see
+/// [`resolve_or_learn`]) is stored under the publication's current
+/// `document_hash`.
+///
 /// # Errors
 ///
 /// Returns an error if the query fails.
@@ -246,7 +275,28 @@ pub(crate) async fn record_progress(
     user_id: i64,
     input: &ProgressInput<'_>,
 ) -> Result<(), StoreError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = web_mev_sqlite::write_tx(pool).await?;
+
+    // Readers name one book by several identifiers (its digest before a cover
+    // replacement, md5 of whatever file name they saved it under); file the
+    // progress under the book's current digest, so each book keeps a single
+    // progress record and history.
+    let hints = ReaderHints {
+        title: input.title,
+        authors: input.authors,
+        filename: input.filename,
+    };
+    let resolved = resolve_or_learn(&mut tx, input.document_hash, &hints).await?;
+    let document_hash = match &resolved {
+        Some(found) => {
+            if found.learned {
+                // Progress sent under this identifier before it was recognised.
+                merge_document_hash(&mut tx, input.document_hash, &found.document_hash).await?;
+            }
+            found.document_hash.as_str()
+        }
+        None => input.document_hash,
+    };
 
     sqlx::query(
         "INSERT INTO documents (user_id, document_hash, progress, percentage, device, device_id,
@@ -263,7 +313,7 @@ pub(crate) async fn record_progress(
                        filename = COALESCE(excluded.filename, documents.filename)",
     )
     .bind(user_id)
-    .bind(input.document_hash)
+    .bind(document_hash)
     .bind(input.progress)
     .bind(input.percentage)
     .bind(input.device)
@@ -280,7 +330,7 @@ pub(crate) async fn record_progress(
          VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(user_id)
-    .bind(input.document_hash)
+    .bind(document_hash)
     .bind(input.progress)
     .bind(input.percentage)
     .bind(input.device)
@@ -316,13 +366,14 @@ pub(crate) async fn get_progress(
     .map_err(StoreError::from)
 }
 
-/// Fetch the newest stored progress for a document, treating a publication's
-/// binary digest and file-name digest as aliases of the same book.
+/// Fetch the stored progress for a document identifier, following it to its
+/// library publication when it names one.
 ///
 /// `KOReader`-compatible readers pick either identifier (binary digest or
-/// `md5(filename)`), so a client using one must still see progress recorded
-/// under the other. When no library publication matches, this is an exact
-/// lookup. The returned record carries the requested `document` identifier.
+/// `md5(filename)`), and progress for a publication is stored under its
+/// current digest, so a client using any identifier of the book sees the same
+/// record. When no publication matches, this is an exact lookup. The returned
+/// record carries the requested `document` identifier.
 ///
 /// # Errors
 ///
@@ -332,32 +383,24 @@ pub(crate) async fn get_progress_with_aliases(
     user_id: i64,
     document: &str,
 ) -> Result<Option<Document>, StoreError> {
-    let publication = match get_publication_by_hash(pool, document).await? {
-        Some(publication) => Some(publication),
-        None => get_publication_by_file_name_hash(pool, document).await?,
-    };
-
-    let Some(publication) = publication else {
+    let mut conn = pool.acquire().await?;
+    let Some(canonical) = resolve_hash(&mut conn, document).await? else {
         return get_progress(pool, user_id, document).await;
     };
 
-    let name_hash = publication
-        .file_name_hash
-        .as_deref()
-        .unwrap_or(&publication.document_hash);
-
+    // Rows under `document` itself only exist until the startup reconcile
+    // has merged them, so the newest of the two wins.
     let found = sqlx::query_as::<_, Document>(
         "SELECT document_hash, progress, percentage, device, device_id, timestamp,
                 title, authors, filename
          FROM documents
-         WHERE user_id = ? AND document_hash IN (?, ?, ?)
+         WHERE user_id = ? AND document_hash IN (?, ?)
          ORDER BY timestamp DESC, id DESC LIMIT 1",
     )
     .bind(user_id)
     .bind(document)
-    .bind(&publication.document_hash)
-    .bind(name_hash)
-    .fetch_optional(pool)
+    .bind(&canonical.document_hash)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(StoreError::from)?;
 
@@ -367,30 +410,10 @@ pub(crate) async fn get_progress_with_aliases(
     }))
 }
 
-/// Fetch a user's sync progress for a document by its metadata file name.
+/// Fetch a user's sync progress for a publication.
 ///
-/// # Errors
-///
-/// Returns an error if the query fails.
-pub(crate) async fn get_progress_by_filename(
-    pool: &SqlitePool,
-    user_id: i64,
-    filename: &str,
-) -> Result<Option<Document>, StoreError> {
-    sqlx::query_as::<_, Document>(
-        "SELECT document_hash, progress, percentage, device, device_id, timestamp,
-                title, authors, filename
-         FROM documents WHERE user_id = ? AND filename = ?",
-    )
-    .bind(user_id)
-    .bind(filename)
-    .fetch_optional(pool)
-    .await
-    .map_err(StoreError::from)
-}
-
-/// Fetch a user's sync progress for a publication, matching on the binary
-/// digest first, then the file-name digest, then the literal file name.
+/// Progress for a library book is stored under its current digest (see
+/// [`record_progress`] and [`reconcile_documents`]).
 ///
 /// # Errors
 ///
@@ -400,31 +423,13 @@ pub(crate) async fn get_progress_for_publication(
     user_id: i64,
     publication: &Publication,
 ) -> Result<Option<Document>, StoreError> {
-    if let Some(doc) = get_progress(pool, user_id, &publication.document_hash).await? {
-        return Ok(Some(doc));
-    }
-
-    if let Some(name_hash) = publication.file_name_hash.as_deref()
-        && let Some(doc) = get_progress(pool, user_id, name_hash).await?
-    {
-        return Ok(Some(doc));
-    }
-
-    if let Some(file_name) = publication.file_name.as_deref()
-        && let Some(doc) = get_progress_by_filename(pool, user_id, file_name).await?
-    {
-        return Ok(Some(doc));
-    }
-
-    Ok(None)
+    get_progress(pool, user_id, &publication.document_hash).await
 }
 
 /// Fetch a user's sync progress for many publications in one query.
 ///
 /// Returns one entry per publication, in order, matched like
-/// [`get_progress_for_publication`]: the binary digest first, then the
-/// file-name digest, then the literal file name (the most recent record wins
-/// when several share a file name).
+/// [`get_progress_for_publication`].
 ///
 /// # Errors
 ///
@@ -438,55 +443,27 @@ pub(crate) async fn get_progress_for_publications(
         return Ok(Vec::new());
     }
 
-    let hashes = publications
-        .iter()
-        .flat_map(|p| std::iter::once(p.document_hash.as_str()).chain(p.file_name_hash.as_deref()));
-    let file_names: Vec<&str> = publications
-        .iter()
-        .filter_map(|p| p.file_name.as_deref())
-        .collect();
-
     let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
         "SELECT document_hash, progress, percentage, device, device_id, timestamp,
                 title, authors, filename
          FROM documents WHERE user_id = ",
     );
-    query.push_bind(user_id).push(" AND (document_hash IN (");
+    query.push_bind(user_id).push(" AND document_hash IN (");
     let mut separated = query.separated(", ");
-    for hash in hashes {
-        separated.push_bind(hash);
+    for publication in publications {
+        separated.push_bind(publication.document_hash.as_str());
     }
     query.push(")");
-    if !file_names.is_empty() {
-        query.push(" OR filename IN (");
-        let mut separated = query.separated(", ");
-        for name in &file_names {
-            separated.push_bind(*name);
-        }
-        query.push(")");
-    }
-    query.push(") ORDER BY timestamp DESC, id DESC");
 
     let rows = query.build_query_as::<Document>().fetch_all(pool).await?;
-
-    let mut by_hash: HashMap<&str, &Document> = HashMap::new();
-    let mut by_file_name: HashMap<&str, &Document> = HashMap::new();
-    for doc in &rows {
-        by_hash.entry(doc.document_hash.as_str()).or_insert(doc);
-        if let Some(name) = doc.filename.as_deref() {
-            by_file_name.entry(name).or_insert(doc);
-        }
-    }
+    let mut by_hash: HashMap<String, Document> = rows
+        .into_iter()
+        .map(|doc| (doc.document_hash.clone(), doc))
+        .collect();
 
     Ok(publications
         .iter()
-        .map(|p| {
-            by_hash
-                .get(p.document_hash.as_str())
-                .or_else(|| by_hash.get(p.file_name_hash.as_deref()?))
-                .or_else(|| by_file_name.get(p.file_name.as_deref()?))
-                .map(|doc| (*doc).clone())
-        })
+        .map(|p| by_hash.remove(&p.document_hash))
         .collect())
 }
 
@@ -575,8 +552,12 @@ pub(crate) fn compute_timeline(events: &[ProgressEvent]) -> DocumentTimeline {
 /// Seconds in a UTC day.
 const DAY_SECS: i64 = 86_400;
 
-/// Number of days covered by [`ReadingStats::daily`].
+/// Number of days the dashboard's recent-activity counts cover.
 pub(crate) const ACTIVITY_DAYS: i64 = 30;
+
+/// Number of days covered by [`ReadingStats::daily`]: 20 weeks, the span of the
+/// dashboard's activity heatmap.
+pub(crate) const HEATMAP_DAYS: i64 = 140;
 
 /// Aggregated reading statistics for a user's dashboard.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -593,7 +574,8 @@ pub(crate) struct ReadingStats {
     pub(crate) devices_30d: i64,
     /// Unix day number (days since the epoch) of the first entry in `daily`.
     pub(crate) first_day: i64,
-    /// Sync counts per UTC day, oldest first, ending on the day of `now`.
+    /// Sync counts per UTC day for the last [`HEATMAP_DAYS`] days, oldest
+    /// first, ending on the day of `now`.
     pub(crate) daily: Vec<i64>,
 }
 
@@ -631,8 +613,8 @@ pub(crate) async fn reading_stats(
     .await?;
 
     let today = now.div_euclid(DAY_SECS);
-    let first_day = today - ACTIVITY_DAYS + 1;
-    let since_30d = first_day * DAY_SECS;
+    let first_day = today - HEATMAP_DAYS + 1;
+    let since_30d = (today - ACTIVITY_DAYS + 1) * DAY_SECS;
     let since_7d = now - 7 * DAY_SECS;
 
     let (syncs_7d, syncs_30d, devices_30d) = sqlx::query_as::<_, (i64, i64, i64)>(
@@ -651,7 +633,7 @@ pub(crate) async fn reading_stats(
          WHERE user_id = ? AND timestamp >= ? GROUP BY day",
     )
     .bind(user_id)
-    .bind(since_30d)
+    .bind(first_day * DAY_SECS)
     .fetch_all(pool)
     .await?;
 
@@ -662,7 +644,7 @@ pub(crate) async fn reading_stats(
         syncs_30d,
         devices_30d,
         first_day,
-        daily: fill_days(&rows, today, ACTIVITY_DAYS),
+        daily: fill_days(&rows, today, HEATMAP_DAYS),
     })
 }
 
@@ -853,6 +835,15 @@ pub(crate) async fn toggle_active(
     .bind(username)
     .fetch_optional(pool)
     .await?;
+    if result == Some(false) {
+        // Sessions of inactive users are already refused; this drops them.
+        sqlx::query(
+            "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)",
+        )
+        .bind(username)
+        .execute(pool)
+        .await?;
+    }
     Ok(result)
 }
 
@@ -874,7 +865,10 @@ pub(crate) async fn toggle_can_upload(
     Ok(result)
 }
 
-/// Update the stored password hash for a user.
+/// Replace a user's passwords, both the MD5 `KOReader` uses and the Argon2id
+/// hash for the web UI, and sign out the user's browser sessions except `keep`.
+///
+/// Returns `false` when there is no such user.
 ///
 /// # Errors
 ///
@@ -883,13 +877,84 @@ pub(crate) async fn set_password(
     pool: &SqlitePool,
     username: &str,
     password_hash: &str,
+    web_password_hash: &str,
+    keep_session: Option<i64>,
 ) -> Result<bool, StoreError> {
-    let result = sqlx::query("UPDATE users SET password_hash = ? WHERE username = ?")
-        .bind(password_hash)
-        .bind(username)
+    let mut tx = web_mev_sqlite::write_tx(pool).await?;
+    let user_id: Option<i64> = sqlx::query_scalar(
+        "UPDATE users SET password_hash = ?, web_password_hash = ? WHERE username = ? RETURNING id",
+    )
+    .bind(password_hash)
+    .bind(web_password_hash)
+    .bind(username)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(user_id) = user_id else {
+        return Ok(false);
+    };
+    sqlx::query("DELETE FROM sessions WHERE user_id = ? AND (?2 IS NULL OR id != ?2)")
+        .bind(user_id)
+        .bind(keep_session)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// Set the language a user picked, or `None` for automatic.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn set_locale(
+    pool: &SqlitePool,
+    user_id: i64,
+    locale: Option<&str>,
+) -> Result<(), StoreError> {
+    sqlx::query("UPDATE users SET locale = ? WHERE id = ?")
+        .bind(locale)
+        .bind(user_id)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+/// Store the first web password hash of an account that only had the MD5.
+///
+/// Returns `false` when the account already has one, so a concurrent sign-in
+/// or password change wins.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn set_missing_web_password(
+    pool: &SqlitePool,
+    user_id: i64,
+    web_password_hash: &str,
+) -> Result<bool, StoreError> {
+    let result = sqlx::query(
+        "UPDATE users SET web_password_hash = ? WHERE id = ? AND web_password_hash IS NULL",
+    )
+    .bind(web_password_hash)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected() > 0)
+}
+
+/// Whether an account has a web password hash yet.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn has_web_password(pool: &SqlitePool, user_id: i64) -> Result<bool, StoreError> {
+    Ok(
+        sqlx::query_scalar("SELECT web_password_hash IS NOT NULL FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false),
+    )
 }
 
 /// A stored `EPUB` publication in the shared OPDS library.
@@ -899,10 +964,6 @@ pub(crate) struct Publication {
     pub(crate) id: i64,
     /// `KOReader` partial `MD5` document digest (the sync join key).
     pub(crate) document_hash: String,
-    /// `MD5` of the original file name (for the "filename" matching mode).
-    pub(crate) file_name_hash: Option<String>,
-    /// Original file name of the uploaded `EPUB`.
-    pub(crate) file_name: Option<String>,
     /// The document title.
     pub(crate) title: String,
     /// Authors serialized as a JSON array string.
@@ -945,6 +1006,10 @@ pub(crate) struct Publication {
     pub(crate) thumb_width: Option<i64>,
     /// Thumbnail height in pixels, once measured.
     pub(crate) thumb_height: Option<i64>,
+    /// Tint colour taken from the cover, as `#rrggbb`, once computed.
+    pub(crate) cover_tint: Option<String>,
+    /// The account that uploaded the book, if recorded.
+    pub(crate) uploaded_by: Option<i64>,
     /// Server-assigned creation timestamp (seconds).
     pub(crate) created_at: i64,
     /// Server-assigned last-update timestamp (seconds).
@@ -964,6 +1029,8 @@ pub(crate) struct CoverImages {
     pub(crate) thumb_path: Option<String>,
     /// Thumbnail `(width, height)` in pixels, if it could be measured.
     pub(crate) thumb_size: Option<(u32, u32)>,
+    /// Tint colour taken from the thumbnail, as `#rrggbb`.
+    pub(crate) cover_tint: Option<String>,
 }
 
 impl CoverImages {
@@ -1019,6 +1086,8 @@ pub(crate) struct PublicationInput<'a> {
     pub(crate) file_size: i64,
     /// Stored cover and thumbnail files.
     pub(crate) images: &'a CoverImages,
+    /// The account that uploaded the book, if known.
+    pub(crate) uploaded_by: Option<i64>,
     /// Server-assigned timestamp (seconds).
     pub(crate) timestamp: i64,
 }
@@ -1026,10 +1095,10 @@ pub(crate) struct PublicationInput<'a> {
 macro_rules! publication_query {
     ($tail:literal) => {
         concat!(
-            "SELECT publications.id AS id, document_hash, file_name_hash, file_name, title, authors, language, ",
+            "SELECT publications.id AS id, document_hash, title, authors, language, ",
             "identifier, publisher, published, description, genres, isbn, series, series_index, ",
             "file_path, file_size, cover_path, cover_media_type, thumb_path, thumb_media_type, ",
-            "cover_width, cover_height, thumb_width, thumb_height, ",
+            "cover_width, cover_height, thumb_width, thumb_height, cover_tint, uploaded_by, ",
             "created_at, updated_at FROM publications ",
             $tail
         )
@@ -1061,8 +1130,9 @@ pub(crate) async fn insert_publication(
          (document_hash, source_hash, file_name_hash, file_name, title, authors, language,
           identifier, publisher, published, description, genres, isbn, series, series_index,
           file_path, file_size, cover_path, cover_media_type, thumb_path, thumb_media_type,
-          cover_width, cover_height, thumb_width, thumb_height, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          cover_width, cover_height, thumb_width, thumb_height, cover_tint, uploaded_by,
+          created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(input.document_hash)
     .bind(input.source_hash)
@@ -1089,6 +1159,8 @@ pub(crate) async fn insert_publication(
     .bind(cover_height)
     .bind(thumb_width)
     .bind(thumb_height)
+    .bind(images.cover_tint.as_deref())
+    .bind(input.uploaded_by)
     .bind(input.timestamp)
     .bind(input.timestamp)
     .execute(pool)
@@ -1097,7 +1169,11 @@ pub(crate) async fn insert_publication(
     Ok(result.last_insert_rowid())
 }
 
-/// Fetch a publication by its `KOReader` document digest.
+/// Fetch a publication by its `KOReader` document digest, current or former.
+///
+/// A replaced cover changes a book's digest; the digests it had before stay
+/// in `publication_aliases`, so copies downloaded earlier keep resolving to
+/// the same publication.
 ///
 /// # Errors
 ///
@@ -1106,11 +1182,15 @@ pub(crate) async fn get_publication_by_hash(
     pool: &SqlitePool,
     document_hash: &str,
 ) -> Result<Option<Publication>, StoreError> {
-    sqlx::query_as::<_, Publication>(publication_query!("WHERE document_hash = ?"))
-        .bind(document_hash)
-        .fetch_optional(pool)
-        .await
-        .map_err(StoreError::from)
+    sqlx::query_as::<_, Publication>(publication_query!(
+        "WHERE document_hash = ?1
+            OR id = (SELECT publication_id FROM publication_aliases WHERE hash = ?1)
+         ORDER BY document_hash = ?1 DESC LIMIT 1"
+    ))
+    .bind(document_hash)
+    .fetch_optional(pool)
+    .await
+    .map_err(StoreError::from)
 }
 
 /// Fetch the document digest of the book converted from an uploaded file.
@@ -1124,23 +1204,6 @@ pub(crate) async fn document_hash_for_source(
 ) -> Result<Option<String>, StoreError> {
     sqlx::query_scalar("SELECT document_hash FROM publications WHERE source_hash = ?")
         .bind(source_hash)
-        .fetch_optional(pool)
-        .await
-        .map_err(StoreError::from)
-}
-
-/// Fetch a publication by its file-name digest (the `KOReader` "Filename"
-/// matching method sends `md5(basename)` as the document identifier).
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
-pub(crate) async fn get_publication_by_file_name_hash(
-    pool: &SqlitePool,
-    file_name_hash: &str,
-) -> Result<Option<Publication>, StoreError> {
-    sqlx::query_as::<_, Publication>(publication_query!("WHERE file_name_hash = ?"))
-        .bind(file_name_hash)
         .fetch_optional(pool)
         .await
         .map_err(StoreError::from)
@@ -1181,9 +1244,12 @@ pub(crate) struct MissingImages {
     pub(crate) cover_width: Option<i64>,
     /// Stored thumbnail width, if measured.
     pub(crate) thumb_width: Option<i64>,
+    /// Stored cover tint, if computed.
+    pub(crate) cover_tint: Option<String>,
 }
 
-/// List publications missing a cover image, a thumbnail, or their pixel sizes.
+/// List publications missing a cover image, a thumbnail, their pixel sizes, or
+/// the tint taken from the thumbnail.
 ///
 /// # Errors
 ///
@@ -1193,10 +1259,10 @@ pub(crate) async fn list_publications_missing_images(
 ) -> Result<Vec<MissingImages>, StoreError> {
     sqlx::query_as::<_, MissingImages>(
         "SELECT id, document_hash, file_path, cover_path, cover_media_type, thumb_path,
-                cover_width, thumb_width
+                cover_width, thumb_width, cover_tint
          FROM publications
          WHERE cover_path IS NULL OR thumb_path IS NULL
-            OR cover_width IS NULL OR thumb_width IS NULL",
+            OR cover_width IS NULL OR thumb_width IS NULL OR cover_tint IS NULL",
     )
     .fetch_all(pool)
     .await
@@ -1219,7 +1285,7 @@ pub(crate) async fn update_publication_images(
     sqlx::query(
         "UPDATE publications SET cover_path = ?, cover_media_type = ?, thumb_path = ?,
                 thumb_media_type = ?, cover_width = ?, cover_height = ?, thumb_width = ?,
-                thumb_height = ?, updated_at = ?
+                thumb_height = ?, cover_tint = ?, updated_at = ?
          WHERE id = ?",
     )
     .bind(images.cover_path.as_deref())
@@ -1230,6 +1296,7 @@ pub(crate) async fn update_publication_images(
     .bind(cover_height)
     .bind(thumb_width)
     .bind(thumb_height)
+    .bind(images.cover_tint.as_deref())
     .bind(timestamp)
     .bind(id)
     .execute(pool)
@@ -1237,7 +1304,124 @@ pub(crate) async fn update_publication_images(
     Ok(())
 }
 
+/// Point a publication at a new document digest inside `tx`, keeping every
+/// former digest as an alias and moving recorded progress to the new one.
+///
+/// Readers cache a book's digest, so copies taken before the change keep
+/// sending the old one; the alias lets them sync with the same progress.
+/// Where a user has progress under both digests, the newer record wins.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Exists`] if `new_hash` belongs to another
+/// publication, [`StoreError::Stale`] if the publication no longer has
+/// `old_hash`, or [`StoreError::Db`] on any storage failure.
+async fn move_publication_hash(
+    tx: &mut sqlx::SqliteConnection,
+    id: i64,
+    old_hash: &str,
+    new_hash: &str,
+    timestamp: i64,
+) -> Result<(), StoreError> {
+    let taken: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM publications WHERE document_hash = ?1 AND id != ?2
+         UNION ALL
+         SELECT publication_id FROM publication_aliases WHERE hash = ?1 AND publication_id != ?2
+         LIMIT 1",
+    )
+    .bind(new_hash)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if taken.is_some() {
+        return Err(StoreError::Exists);
+    }
+
+    let moved =
+        sqlx::query("UPDATE publications SET document_hash = ? WHERE id = ? AND document_hash = ?")
+            .bind(new_hash)
+            .bind(id)
+            .bind(old_hash)
+            .execute(&mut *tx)
+            .await?;
+    if moved.rows_affected() == 0 {
+        return Err(StoreError::Stale);
+    }
+    if old_hash == new_hash {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "INSERT INTO publication_aliases (hash, publication_id, created_at) VALUES (?, ?, ?)
+         ON CONFLICT (hash) DO NOTHING",
+    )
+    .bind(old_hash)
+    .bind(id)
+    .bind(timestamp)
+    .execute(&mut *tx)
+    .await?;
+    // A digest the book had before (the old cover put back) is current again.
+    sqlx::query("DELETE FROM publication_aliases WHERE hash = ?")
+        .bind(new_hash)
+        .execute(&mut *tx)
+        .await?;
+
+    merge_document_hash(tx, old_hash, new_hash).await
+}
+
+/// File every user's progress recorded under `from` under `to` instead.
+///
+/// Where a user has records under both, the newer one wins; the full history
+/// of both moves to `to`.
+///
+/// # Errors
+///
+/// Returns an error if a query fails.
+async fn merge_document_hash(
+    tx: &mut sqlx::SqliteConnection,
+    from: &str,
+    to: &str,
+) -> Result<(), StoreError> {
+    if from == to {
+        return Ok(());
+    }
+    // Keep only the newest of a user's records under the two identifiers,
+    // then file what is left under `to`.
+    sqlx::query(
+        "DELETE FROM documents WHERE document_hash = ?1 AND EXISTS (
+             SELECT 1 FROM documents d WHERE d.user_id = documents.user_id
+                AND d.document_hash = ?2 AND d.timestamp >= documents.timestamp)",
+    )
+    .bind(from)
+    .bind(to)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM documents WHERE document_hash = ?2 AND EXISTS (
+             SELECT 1 FROM documents d WHERE d.user_id = documents.user_id
+                AND d.document_hash = ?1)",
+    )
+    .bind(from)
+    .bind(to)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE documents SET document_hash = ? WHERE document_hash = ?")
+        .bind(to)
+        .bind(from)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE progress_events SET document_hash = ? WHERE document_hash = ?")
+        .bind(to)
+        .bind(from)
+        .execute(&mut *tx)
+        .await?;
+    Ok(())
+}
+
 /// Replace a publication's document digest, leaving its stored files in place.
+///
+/// The old digest stays an alias and progress moves along, like a cover
+/// replacement.
 ///
 /// # Errors
 ///
@@ -1245,15 +1429,85 @@ pub(crate) async fn update_publication_images(
 pub(crate) async fn update_publication_hash(
     pool: &SqlitePool,
     id: i64,
-    document_hash: &str,
+    old_hash: &str,
+    new_hash: &str,
+    timestamp: i64,
 ) -> Result<(), StoreError> {
-    sqlx::query("UPDATE publications SET document_hash = ? WHERE id = ?")
-        .bind(document_hash)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map(|_| ())
-        .map_err(StoreError::from)
+    let mut tx = web_mev_sqlite::write_tx(pool).await?;
+    move_publication_hash(&mut tx, id, old_hash, new_hash, timestamp).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// A rewritten `EPUB` that takes over from a publication's stored file.
+#[derive(Debug)]
+pub(crate) struct Replacement<'a> {
+    /// `KOReader` partial `MD5` digest of the new file.
+    pub(crate) document_hash: &'a str,
+    /// Path of the new file, relative to the books directory.
+    pub(crate) file_path: &'a str,
+    /// Size of the new file in bytes.
+    pub(crate) file_size: i64,
+    /// The new cover and thumbnail files.
+    pub(crate) images: &'a CoverImages,
+    /// Server-assigned timestamp (seconds).
+    pub(crate) timestamp: i64,
+}
+
+/// Swap a publication's stored file and cover images for rewritten ones.
+///
+/// The publication keeps its id and metadata; the digest it had (`old_hash`)
+/// becomes an alias and recorded progress moves to the new digest, all in one
+/// transaction.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Exists`] if the new digest belongs to another
+/// publication, [`StoreError::Stale`] if the publication changed since
+/// `old_hash` was read, or [`StoreError::Db`] on any storage failure.
+pub(crate) async fn replace_publication_file(
+    pool: &SqlitePool,
+    id: i64,
+    old_hash: &str,
+    replacement: &Replacement<'_>,
+) -> Result<(), StoreError> {
+    let images = replacement.images;
+    let (cover_width, cover_height) = size_columns(images.cover_size);
+    let (thumb_width, thumb_height) = size_columns(images.thumb_size);
+
+    let mut tx = web_mev_sqlite::write_tx(pool).await?;
+    move_publication_hash(
+        &mut tx,
+        id,
+        old_hash,
+        replacement.document_hash,
+        replacement.timestamp,
+    )
+    .await?;
+    sqlx::query(
+        "UPDATE publications SET file_path = ?, file_size = ?, cover_path = ?,
+                cover_media_type = ?, thumb_path = ?, thumb_media_type = ?, cover_width = ?,
+                cover_height = ?, thumb_width = ?, thumb_height = ?, cover_tint = ?,
+                updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(replacement.file_path)
+    .bind(replacement.file_size)
+    .bind(images.cover_path.as_deref())
+    .bind(images.cover_media_type.as_deref())
+    .bind(images.thumb_path.as_deref())
+    .bind(images.thumb_media_type())
+    .bind(cover_width)
+    .bind(cover_height)
+    .bind(thumb_width)
+    .bind(thumb_height)
+    .bind(images.cover_tint.as_deref())
+    .bind(replacement.timestamp)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Fetch a publication by its original file name.
@@ -1274,8 +1528,8 @@ pub(crate) async fn get_publication_by_file_name(
 
 /// Resolve the publication matching a synced document.
 ///
-/// Tries the binary digest first, then the file-name digest, then the literal
-/// file name, mirroring [`get_progress_for_publication`].
+/// Follows the document's identifier like [`get_progress_with_aliases`], then
+/// falls back to the literal file name for records no identifier matches.
 ///
 /// # Errors
 ///
@@ -1284,14 +1538,9 @@ pub(crate) async fn find_publication_for_document(
     pool: &SqlitePool,
     document: &Document,
 ) -> Result<Option<Publication>, StoreError> {
-    if let Some(publication) = get_publication_by_hash(pool, &document.document_hash).await? {
-        return Ok(Some(publication));
-    }
-
-    if let Some(publication) =
-        get_publication_by_file_name_hash(pool, &document.document_hash).await?
-    {
-        return Ok(Some(publication));
+    let mut conn = pool.acquire().await?;
+    if let Some(found) = resolve_hash(&mut conn, &document.document_hash).await? {
+        return get_publication_by_id(pool, found.id).await;
     }
 
     if let Some(filename) = document.filename.as_deref()
@@ -1301,6 +1550,22 @@ pub(crate) async fn find_publication_for_document(
     }
 
     Ok(None)
+}
+
+/// Fetch a publication by its internal id.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn get_publication_by_id(
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<Option<Publication>, StoreError> {
+    sqlx::query_as::<_, Publication>(publication_query!("WHERE publications.id = ?"))
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(StoreError::from)
 }
 
 /// Count publications, optionally filtered by a title/author/description search.
@@ -1332,6 +1597,24 @@ pub(crate) async fn count_publications(
         }
     };
     Ok(count)
+}
+
+/// The most recently added publications, newest first.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn list_recent_publications(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<Publication>, StoreError> {
+    sqlx::query_as::<_, Publication>(publication_query!(
+        "ORDER BY created_at DESC, publications.id DESC LIMIT ?"
+    ))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::from)
 }
 
 /// List a page of publications ordered by title, optionally search-filtered.
@@ -1426,9 +1709,7 @@ fn publication_filter_sql(filter: &PublicationFilter<'_>) -> (String, Vec<BindVa
     use std::fmt::Write as _;
 
     /// SQL fragment matching a publication to a user's synced document.
-    const MATCH: &str = "(d.document_hash = publications.document_hash \
-         OR (publications.file_name_hash IS NOT NULL AND d.document_hash = publications.file_name_hash) \
-         OR (publications.file_name IS NOT NULL AND d.filename = publications.file_name))";
+    const MATCH: &str = "d.document_hash = publications.document_hash";
 
     let mut where_clause = String::from(" WHERE 1 = 1");
     let mut binds = Vec::new();
@@ -1759,7 +2040,7 @@ pub(crate) async fn update_publication_enrichment(
         sqlx::query(
             "UPDATE publications SET genres = ?, isbn = ?, cover_path = ?, cover_media_type = ?,
                     thumb_path = ?, thumb_media_type = ?, cover_width = ?, cover_height = ?,
-                    thumb_width = ?, thumb_height = ?, updated_at = ?
+                    thumb_width = ?, thumb_height = ?, cover_tint = ?, updated_at = ?
              WHERE document_hash = ?",
         )
         .bind(&update.genres)
@@ -1772,6 +2053,7 @@ pub(crate) async fn update_publication_enrichment(
         .bind(cover_height)
         .bind(thumb_width)
         .bind(thumb_height)
+        .bind(images.cover_tint.as_deref())
         .bind(update.timestamp)
         .bind(document_hash)
         .execute(pool)
@@ -1789,6 +2071,351 @@ pub(crate) async fn update_publication_enrichment(
         .await?
     };
     Ok(result.rows_affected() > 0)
+}
+
+// ---------------------------------------------------------------------------
+// Publication identity: every identifier a reader may send for a book.
+// ---------------------------------------------------------------------------
+
+/// Metadata a reader sent along with its progress, used to recognise a book
+/// whose identifier the server has not seen before.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct ReaderHints<'a> {
+    /// Document title.
+    pub(crate) title: Option<&'a str>,
+    /// Free-text authors, as the reader formats them.
+    pub(crate) authors: Option<&'a str>,
+    /// The basename the reader stored the book under.
+    pub(crate) filename: Option<&'a str>,
+}
+
+/// The library publication an identifier resolved to.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub(crate) struct ResolvedPublication {
+    /// Internal publication id.
+    pub(crate) id: i64,
+    /// The publication's current document digest.
+    pub(crate) document_hash: String,
+    /// Whether the identifier was only recognised (and recorded) just now.
+    #[sqlx(skip)]
+    pub(crate) learned: bool,
+}
+
+/// Find the publication an identifier names: its current digest, any alias
+/// (former digests, predicted and learned file-name digests), or the legacy
+/// `file_name_hash` column.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn resolve_hash(
+    conn: &mut sqlx::SqliteConnection,
+    hash: &str,
+) -> Result<Option<ResolvedPublication>, StoreError> {
+    sqlx::query_as::<_, ResolvedPublication>(
+        "SELECT id, document_hash FROM (
+             SELECT id, document_hash, 0 AS rank FROM publications WHERE document_hash = ?1
+             UNION ALL
+             SELECT p.id, p.document_hash, 1 FROM publication_aliases a
+                 JOIN publications p ON p.id = a.publication_id WHERE a.hash = ?1
+             UNION ALL
+             SELECT id, document_hash, 2 FROM publications WHERE file_name_hash = ?1
+         ) ORDER BY rank LIMIT 1",
+    )
+    .bind(hash)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(StoreError::from)
+}
+
+/// Like [`resolve_hash`], but also recognise a file-name identifier the
+/// server has not seen, from the metadata the reader sent with it.
+///
+/// The reader's file name must be the one a single publication was uploaded
+/// under, or, when `md5(hints.filename)` is `hash` (so the reader is provably
+/// in "filename" mode, and merely renamed the book), exactly one publication
+/// must have the same title (case and spacing aside) and an overlapping
+/// author. The identifier is then kept as a `learned` alias, so later lookups
+/// without metadata resolve too.
+///
+/// # Errors
+///
+/// Returns an error if a query fails.
+pub(crate) async fn resolve_or_learn(
+    conn: &mut sqlx::SqliteConnection,
+    hash: &str,
+    hints: &ReaderHints<'_>,
+) -> Result<Option<ResolvedPublication>, StoreError> {
+    if let Some(found) = resolve_hash(conn, hash).await? {
+        return Ok(Some(found));
+    }
+
+    let Some(filename) = hints.filename.filter(|f| !f.is_empty()) else {
+        return Ok(None);
+    };
+
+    let mut matches: Vec<ResolvedPublication> =
+        sqlx::query_as("SELECT id, document_hash FROM publications WHERE file_name = ? LIMIT 2")
+            .bind(filename)
+            .fetch_all(&mut *conn)
+            .await?;
+
+    if matches.is_empty()
+        && crate::db::md5_hex(filename) == hash
+        && let Some(title) = hints
+            .title
+            .map(crate::identity::fold)
+            .filter(|t| !t.is_empty())
+    {
+        let rows: Vec<(i64, String, String, String)> =
+            sqlx::query_as("SELECT id, document_hash, title, authors FROM publications")
+                .fetch_all(&mut *conn)
+                .await?;
+        matches = rows
+            .into_iter()
+            .filter(|(_, _, candidate, authors)| {
+                let authors: Vec<String> = serde_json::from_str(authors).unwrap_or_default();
+                crate::identity::fold(candidate) == title
+                    && crate::identity::authors_overlap(hints.authors, &authors)
+            })
+            .map(|(id, document_hash, _, _)| ResolvedPublication {
+                id,
+                document_hash,
+                learned: false,
+            })
+            .collect();
+    }
+
+    // With no match, or several, a guess could mix up two books' progress.
+    let Ok([found]) = <[ResolvedPublication; 1]>::try_from(matches) else {
+        return Ok(None);
+    };
+
+    add_alias(conn, hash, found.id, "learned").await?;
+    tracing::info!(
+        hash,
+        document_hash = %found.document_hash,
+        filename,
+        "recognised a reader's file-name identifier for a library book"
+    );
+    Ok(Some(ResolvedPublication {
+        learned: true,
+        ..found
+    }))
+}
+
+/// Record `hash` as an identifier of publication `id`, keeping whatever it
+/// already belongs to.
+async fn add_alias(
+    conn: &mut sqlx::SqliteConnection,
+    hash: &str,
+    id: i64,
+    kind: &str,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO publication_aliases (hash, publication_id, created_at, kind)
+         VALUES (?, ?, ?, ?) ON CONFLICT (hash) DO NOTHING",
+    )
+    .bind(hash)
+    .bind(id)
+    .bind(crate::util::now_unix())
+    .bind(kind)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// The columns a publication's predicted file names derive from.
+#[derive(sqlx::FromRow)]
+struct NamedPublication {
+    id: i64,
+    document_hash: String,
+    file_name_hash: Option<String>,
+    title: String,
+    authors: String,
+    file_name: Option<String>,
+}
+
+/// Regenerate every publication's predicted file-name identifiers (the
+/// `name` aliases, see [`crate::identity::name_hashes`]), returning how many
+/// are stored.
+///
+/// A name two books share (two books called "Poems", say) is left out for
+/// both, and a hash that is already another kind of identifier keeps that
+/// meaning.
+///
+/// # Errors
+///
+/// Returns an error if a query fails.
+pub(crate) async fn refresh_name_aliases(pool: &SqlitePool) -> Result<usize, StoreError> {
+    let mut tx = web_mev_sqlite::write_tx(pool).await?;
+    let rows = sqlx::query_as::<_, NamedPublication>(
+        "SELECT id, document_hash, file_name_hash, title, authors, file_name FROM publications",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let mut owners: HashMap<String, Vec<i64>> = HashMap::new();
+    for row in &rows {
+        for hash in crate::identity::name_hashes(&row.title, &row.authors, row.file_name.as_deref())
+        {
+            if hash != row.document_hash {
+                owners.entry(hash).or_default().push(row.id);
+            }
+        }
+    }
+    // A publication's own digest or file-name hash is never another's name.
+    for row in &rows {
+        for hash in std::iter::once(&row.document_hash).chain(row.file_name_hash.as_ref()) {
+            if let Some(ids) = owners.get_mut(hash) {
+                ids.push(row.id);
+            }
+        }
+    }
+
+    sqlx::query("DELETE FROM publication_aliases WHERE kind = 'name'")
+        .execute(&mut *tx)
+        .await?;
+    let mut stored = 0;
+    for (hash, mut ids) in owners {
+        ids.sort_unstable();
+        ids.dedup();
+        if let [id] = ids[..] {
+            add_alias(&mut tx, &hash, id, "name").await?;
+            stored += 1;
+        }
+    }
+    tx.commit().await?;
+    Ok(stored)
+}
+
+/// File progress recorded under any identifier of a library book under the
+/// book's current digest, returning the number of identifiers merged.
+///
+/// Older releases stored each identifier a reader sent separately, so one
+/// book could show up several times with different progress. Each record's
+/// own title and file name serve as [`ReaderHints`].
+///
+/// # Errors
+///
+/// Returns an error if a query fails.
+pub(crate) async fn reconcile_documents(pool: &SqlitePool) -> Result<usize, StoreError> {
+    /// One synced identifier and the metadata readers sent with it.
+    #[derive(sqlx::FromRow)]
+    struct Synced {
+        document_hash: String,
+        title: Option<String>,
+        authors: Option<String>,
+        filename: Option<String>,
+    }
+
+    let rows = sqlx::query_as::<_, Synced>(
+        "SELECT document_hash, MAX(title) AS title, MAX(authors) AS authors,
+                MAX(filename) AS filename
+         FROM documents GROUP BY document_hash",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut merged = 0;
+    for row in rows {
+        let hash = row.document_hash;
+        let mut tx = web_mev_sqlite::write_tx(pool).await?;
+        let hints = ReaderHints {
+            title: row.title.as_deref(),
+            authors: row.authors.as_deref(),
+            filename: row.filename.as_deref(),
+        };
+        if let Some(found) = resolve_or_learn(&mut tx, &hash, &hints).await?
+            && found.document_hash != hash
+        {
+            merge_document_hash(&mut tx, &hash, &found.document_hash).await?;
+            tracing::info!(
+                from = %hash,
+                to = %found.document_hash,
+                "merged reading progress into its library book"
+            );
+            merged += 1;
+        }
+        tx.commit().await?;
+    }
+    Ok(merged)
+}
+
+/// Declare that `user_id`'s document `hash` is the library book `target`
+/// (a publication digest), returning the book's digest.
+///
+/// The identifier becomes a `learned` alias of the book and every record
+/// under it moves to the book, as when a reader's metadata gives it away.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Exists`] when `hash` already names a library book,
+/// [`StoreError::Stale`] when the user has no such document or `target` is
+/// not a book, or [`StoreError::Db`] on any storage failure.
+pub(crate) async fn link_document(
+    pool: &SqlitePool,
+    user_id: i64,
+    hash: &str,
+    target: &str,
+) -> Result<String, StoreError> {
+    let mut tx = web_mev_sqlite::write_tx(pool).await?;
+    let owned: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM documents WHERE user_id = ? AND document_hash = ?")
+            .bind(user_id)
+            .bind(hash)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if owned.is_none() {
+        return Err(StoreError::Stale);
+    }
+    if resolve_hash(&mut tx, hash).await?.is_some() {
+        return Err(StoreError::Exists);
+    }
+    let Some(book) = resolve_hash(&mut tx, target).await? else {
+        return Err(StoreError::Stale);
+    };
+
+    add_alias(&mut tx, hash, book.id, "learned").await?;
+    merge_document_hash(&mut tx, hash, &book.document_hash).await?;
+    web_mev_auth::audit::record(
+        &mut *tx,
+        Some(user_id),
+        "document.link",
+        Some("document"),
+        Some(hash),
+        &serde_json::json!({ "publication_id": book.id, "document_hash": book.document_hash }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(book.document_hash)
+}
+
+/// A library book offered when linking a synced document by hand.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub(crate) struct PublicationChoice {
+    /// The book's document digest.
+    pub(crate) document_hash: String,
+    /// The book's title.
+    pub(crate) title: String,
+    /// Authors serialized as a JSON array string.
+    pub(crate) authors: String,
+}
+
+/// Every library book, by title, for the "same book as…" picker.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub(crate) async fn list_publication_choices(
+    pool: &SqlitePool,
+) -> Result<Vec<PublicationChoice>, StoreError> {
+    sqlx::query_as::<_, PublicationChoice>(
+        "SELECT document_hash, title, authors FROM publications ORDER BY title COLLATE NOCASE",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::from)
 }
 
 #[cfg(test)]

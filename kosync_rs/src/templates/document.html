@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}{% if document.book %}{{ document.book.title }}{% elif document.fallback_title %}{{ document.fallback_title }}{% else %}{{ t(key="doc_title_hash", hash=document.document_hash) }}{% endif %} · {{ t(key="doc_history") }}{% endblock title %}
+
+{% block content %}
+{{<flash error={error | default(value="")} notice={notice | default(value="")}/>}}
+<nav class="breadcrumb" aria-label="{{ t(key="book_breadcrumb_aria") }}">
+  <a href="/">{{<icon name="chevron-left"/>}}{{ t(key="progress_title") }}</a>
+  {% if document.book %}
+    <span class="separator">/</span>
+    <a href="/books/{{ document.book.document_hash }}">{{ document.book.title }}</a>
+  {% endif %}
+</nav>
+
+<header class="doc-header panel"{% if document.book %} style="--tint: {{ document.book.tint }}"{% endif %}>
+  {% if document.book %}
+  <a class="cover-container" href="/books/{{ document.book.document_hash }}" tabindex="-1" aria-hidden="true">
+    {% if document.book.has_thumb %}
+      <img src="/books/{{ document.book.document_hash }}/thumbnail" alt="">
+    {% else %}
+      <div class="cloth-cover" style="--tint: {{ document.book.tint }}"></div>
+    {% endif %}
+  </a>
+  {% endif %}
+  <hgroup>
+    {% if document.book %}
+      <h1><a href="/books/{{ document.book.document_hash }}">{{ document.book.title }}</a></h1>
+      {% if document.book.author %}<p>{{ document.book.author }}</p>{% endif %}
+    {% elif document.fallback_title %}
+      <h1>{{ document.fallback_title }}</h1>
+      {% if document.fallback_author %}<p>{{ document.fallback_author }}</p>{% endif %}
+    {% else %}
+      <h1><code>{{ document.document_hash }}</code></h1>
+    {% endif %}
+    <p>{{ t(key="doc_sync_history") }} · {{ sync_label }}</p>
+  </hgroup>
+</header>
+
+<section class="kpi-row" aria-label="{{ t(key="doc_summary_aria") }}">
+  <div class="stat">
+    <span class="stat-label">{{ t(key="nav_progress") }}</span>
+    <span class="stat-value">{{ document.percentage | pct }}</span>
+    <span class="stat-hint">{{ document.percent }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">{{ t(key="doc_current_device") }}</span>
+    <span class="stat-value stat-value-sm">{{ document.device }}</span>
+    <span class="stat-hint">{{ t(key="doc_synced_html", when=document.synced | timeago, datetime=document.synced) | safe }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">{{ t(key="doc_first_recorded") }}</span>
+    <span class="stat-value stat-value-sm"><time datetime="{{ document.first_recorded }}">{{ document.first_recorded | datefmt }}</time></span>
+    <span class="stat-hint">{{ document.first_recorded | timeago }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">{{ t(key="doc_last_recorded") }}</span>
+    <span class="stat-value stat-value-sm"><time datetime="{{ document.last_recorded }}">{{ document.last_recorded | datefmt }}</time></span>
+    <span class="stat-hint">{{ document.last_recorded | timeago }}</span>
+  </div>
+</section>
+
+<div class="history-grid">
+  <div>
+    {% if document.chart %}
+    <section class="card" aria-labelledby="chart-heading">
+      <h2 id="chart-heading" class="card-title">{{<icon name="activity"/>}}{{ t(key="doc_chart_title") }}</h2>
+      {% if document.chart.points | length < 2 %}
+      <p class="chart-empty">{{ t(key="doc_chart_sparse") }}</p>
+      {% else %}
+      <svg class="chart" viewBox="0 0 640 220" role="img" aria-label="{{ t(key="doc_chart_aria", start=document.chart.start_label, end=document.chart.end_label) }}">
+        <line class="grid-line" x1="40" x2="624" y1="12" y2="12"/>
+        <line class="grid-line" x1="40" x2="624" y1="102" y2="102"/>
+        <line class="grid-line" x1="40" x2="624" y1="192" y2="192"/>
+        <text class="axis-label end" x="32" y="16">100%</text>
+        <text class="axis-label end" x="32" y="106">50%</text>
+        <text class="axis-label end" x="32" y="196">0%</text>
+        <text class="axis-label" x="40" y="214">{{ document.chart.start_label }}</text>
+        <text class="axis-label end" x="624" y="214">{{ document.chart.end_label }}</text>
+        <path class="area" d="{{ document.chart.area }}"/>
+        <path class="line" d="{{ document.chart.line }}"/>
+        {% for point in document.chart.points %}
+        <circle class="point dev-{{ point.colour }}" cx="{{ point.x }}" cy="{{ point.y }}" r="4.5"><title>{{ point.label }}</title></circle>
+        {% endfor %}
+      </svg>
+      {% endif %}
+      {% if document.devices | length > 1 %}
+      <ul class="legend">
+        {% for device in document.devices %}
+        <li class="dev-{{ device.colour }}"><span class="swatch"></span>{{ device.device }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endif %}
+
+  </div>
+
+  <aside>
+    {% if document.events %}
+    <section class="card" aria-labelledby="events-heading">
+      <h2 id="events-heading" class="card-title">{{<icon name="history"/>}}{{ t(key="doc_recent_syncs") }}</h2>
+      <ul class="event-list">
+        {% for event in document.events %}
+        <li>
+          <span class="swatch dev-{{ event.colour }}"></span>
+          <span class="event-device">
+            {{ event.device }}
+            <small><time datetime="{{ event.synced }}" title="{{ event.synced | datefmt }}">{{ event.synced | timeago }}</time></small>
+          </span>
+          <span class="event-value">
+            {{ event.percentage | pct }}
+            {% if event.delta %}<span class="delta {{ event.trend }}">{{ event.delta }}</span>{% endif %}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if document.link_choices %}
+    <section class="card" id="link" aria-labelledby="link-heading">
+      <h2 id="link-heading" class="card-title">{{<icon name="book"/>}}{{ t(key="doc_link_title") }}</h2>
+      <p class="muted">{{ t(key="doc_link_lead") }}</p>
+      <form method="post" action="/documents/{{ document.document_hash }}/link"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>{{ t(key="doc_link_label") }}
+          <select name="publication" required>
+            {% for choice in document.link_choices %}
+            <option value="{{ choice.document_hash }}" {% if loop.first and choice.suggested %}selected{% endif %}>{{ choice.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit">{{ t(key="doc_link_submit") }}</button>
+      </form>
+    </section>
+    {% endif %}
+
+    <details class="tech-details">
+      <summary>{{ t(key="book_technical") }}</summary>
+      <code>{{ t(key="book_position", value=document.progress) }}</code>
+      <code>{{ t(key="book_hash", value=document.document_hash) }}</code>
+    </details>
+  </aside>
+</div>
+
+{% if document.devices %}
+<section class="card" aria-labelledby="devices-heading">
+  <h2 id="devices-heading" class="card-title">{{<icon name="device"/>}}{{ t(key="doc_by_device") }}</h2>
+  <div class="share-bar" role="img" aria-label="{{ t(key="doc_share_aria") }}">
+    {% for device in document.devices %}{% if device.share > 0 %}<span class="dev-{{ device.colour }}" style="width: {{ device.share }}%" title="{{ device.device }}: {{ device.contribution }}"></span>{% endif %}{% endfor %}
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">{{ t(key="doc_device") }}</th>
+          <th scope="col">{{ t(key="doc_first_seen") }}</th>
+          <th scope="col">{{ t(key="doc_last_seen") }}</th>
+          <th scope="col" class="num">{{ t(key="doc_syncs") }}</th>
+          <th scope="col" class="num">{{ t(key="doc_contributed") }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for device in document.devices %}
+        <tr>
+          <td class="dev-{{ device.colour }}">
+            <span class="swatch"></span>
+            {{ device.device }}
+            {% if device.device_id %}<br><small class="muted"><code>{{ device.device_id }}</code></small>{% endif %}
+          </td>
+          <td><time datetime="{{ device.first_seen }}">{{ device.first_seen | timeago }}</time></td>
+          <td><time datetime="{{ device.last_seen }}">{{ device.last_seen | timeago }}</time></td>
+          <td class="num">{{ device.sync_count }}</td>
+          <td class="num">{{ device.contribution }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock content %}

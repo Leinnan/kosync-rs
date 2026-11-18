@@ -46,6 +46,19 @@ impl fmt::Display for PreflightError {
 
 impl std::error::Error for PreflightError {}
 
+impl PreflightError {
+    /// The translation key of the message shown to the uploader.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Self::NotZip => "import_invalid_epub",
+            Self::TooManyEntries => "import_rejected_too_many_entries",
+            Self::UnsafePath => "import_rejected_unsafe_path",
+            Self::EntryTooLarge => "import_rejected_entry_too_large",
+            Self::ExpandedTooLarge => "import_rejected_expanded_too_large",
+        }
+    }
+}
+
 /// Check an uploaded archive against the safety limits.
 ///
 /// # Errors

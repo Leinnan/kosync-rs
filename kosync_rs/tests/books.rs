@@ -162,7 +162,11 @@ async fn book_detail_shows_metadata_and_progress() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Test Book"));
     assert!(body.contains("Alice Author"));
-    assert!(body.contains("Your reading progress"));
+    assert!(
+        body.contains(r#"role="progressbar""#),
+        "the hero shows progress"
+    );
+    assert!(body.contains("Recent syncs"), "the aside lists the syncs");
     assert!(body.contains("<time datetime="));
     assert!(body.contains("Technical information"));
     assert!(!body.contains("delete_modal"));
@@ -207,7 +211,7 @@ async fn download_and_thumbnail_via_web() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(!bytes.is_empty());
+    assert_ne!(bytes.len(), 0);
 }
 
 #[tokio::test]
@@ -305,12 +309,14 @@ async fn document_maps_to_book_by_filename_hash() {
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Test Book"));
     assert!(html.contains(&format!("href=\"/books/{book_hash}\"")));
-    assert!(html.contains(&format!("href=\"/documents/{filename_digest}\"")));
+    // Progress sent under the file-name digest is filed under the book's own.
+    assert!(html.contains(&format!("href=\"/documents/{book_hash}\"")));
+    assert!(!html.contains(&format!("href=\"/documents/{filename_digest}\"")));
 
     let (status, _, html) = send_html(
         &app,
         "GET",
-        &format!("/documents/{filename_digest}"),
+        &format!("/documents/{book_hash}"),
         &[("cookie", alice.as_str())],
         "",
     )

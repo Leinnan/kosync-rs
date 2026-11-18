@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}{{ failure.title }}{% endblock title %}
+{% block body_class %}auth-page{% endblock body_class %}
+
+{% block content %}
+<article class="auth-card error-card">
+  <header>
+    <span class="brand-mark">{{<icon name={failure.icon}/>}}</span>
+    <p class="error-status">{{ t(key="error_status", code=failure.status) }}</p>
+    <h1>{{ failure.title }}</h1>
+    <p>{{ failure.lead }}</p>
+  </header>
+
+  <p class="error-detail">{{ t(key="error_detail") }}: <code>{{ failure.detail }}</code></p>
+
+  <div class="error-actions">
+    <a href="/" role="button" class="with-icon">{{<icon name="book"/>}}{{ t(key="error_home") }}</a>
+    <a href="/" role="button" class="secondary with-icon" data-history-back>{{<icon name="chevron-left"/>}}{{ t(key="error_back") }}</a>
+  </div>
+</article>
+{% endblock content %}

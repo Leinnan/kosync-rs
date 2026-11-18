@@ -3,6 +3,10 @@ name = "kosync_rs"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Re-read templates from KOSYNC_RS_TEMPLATE_DIR when they change, for development.
+reload = ["web_mev_templates/reload"]
+
 [lints]
 workspace = true
 
@@ -14,10 +18,9 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "derive", "migr
 libsqlite3-sys = { version = "0.37", features = ["bundled"] }
 md-5 = "0.10"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-dotenv = { package = "dotenv-ng", version = "1" }
-tera = { version = "1.20", features = ["builtins"] }
-tower-cookies = { version = "0.11", features = ["private"] }
+tera = "2"
+include_dir = "0.7"
+tower-cookies = "0.11"
 time = { version = "0.3", features = ["formatting"] }
 epub = { version = "2.1.5", default-features = false }
 boko = { version = "0.6.0", default-features = false }
@@ -29,6 +32,14 @@ mime_guess = "2.0.5"
 tokio-util = { version = "0.7.19", features = ["io"] }
 zip = "3"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "charset"] }
+web_mev_core = { git = "https://github.com/Leinnan/web_mev_toolkit", rev = "b563b96c187df78089b37bc75a5fcfc59e85101a" }
+web_mev_runtime = { git = "https://github.com/Leinnan/web_mev_toolkit", rev = "b563b96c187df78089b37bc75a5fcfc59e85101a" }
+web_mev_sqlite = { git = "https://github.com/Leinnan/web_mev_toolkit", rev = "b563b96c187df78089b37bc75a5fcfc59e85101a" }
+web_mev_axum = { git = "https://github.com/Leinnan/web_mev_toolkit", rev = "b563b96c187df78089b37bc75a5fcfc59e85101a" }
+web_mev_templates = { git = "https://github.com/Leinnan/web_mev_toolkit", rev = "b563b96c187df78089b37bc75a5fcfc59e85101a" }
+web_mev_auth = { git = "https://github.com/Leinnan/web_mev_toolkit", rev = "b563b96c187df78089b37bc75a5fcfc59e85101a" }
+web_mev_i18n = { git = "https://github.com/Leinnan/web_mev_toolkit", rev = "b563b96c187df78089b37bc75a5fcfc59e85101a" }
+web_mev_assets = { git = "https://github.com/Leinnan/web_mev_toolkit", rev = "b563b96c187df78089b37bc75a5fcfc59e85101a", features = ["axum"] }
 
 [dev-dependencies]
 serde_json = "1"

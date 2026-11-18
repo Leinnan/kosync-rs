@@ -1,0 +1,51 @@
+{% if books %}
+<div class="palette-group">
+  <p class="palette-group-title">{{ t(key="nav_library") }}</p>
+  {% for book in books %}
+  <a class="palette-item" role="option" href="/books/{{ book.document_hash }}">
+    <span class="palette-thumb">
+      {% if book.has_thumb %}<img src="/books/{{ book.document_hash }}/thumbnail" alt="" loading="lazy">{% else %}<span class="cloth-cover" style="--tint: {{ book.tint }}"></span>{% endif %}
+    </span>
+    <span class="palette-item-text">
+      <strong>{{ book.title }}</strong>
+      {% if book.author %}<small>{{ book.author }}</small>{% endif %}
+    </span>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if documents %}
+<div class="palette-group">
+  <p class="palette-group-title">{% if q %}{{ t(key="search_documents") }}{% else %}{{ t(key="sort_recent_sync") }}{% endif %}</p>
+  {% for doc in documents %}
+  <a class="palette-item" role="option" href="/documents/{{ doc.document_hash }}">
+    <span class="palette-thumb">
+      {% if doc.thumb_hash %}<img src="/books/{{ doc.thumb_hash }}/thumbnail" alt="" loading="lazy">{% else %}<span class="cloth-cover" style="--tint: {{ doc.tint }}"></span>{% endif %}
+    </span>
+    <span class="palette-item-text">
+      <strong>{{ doc.title }}</strong>
+      <small>{{ doc.subtitle }} · <time datetime="{{ doc.synced }}">{{ doc.synced | timeago }}</time></small>
+    </span>
+    <span class="palette-item-aside">{{ doc.percentage | pct }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if actions %}
+<div class="palette-group">
+  <p class="palette-group-title">{{ t(key="search_go_to") }}</p>
+  {% for action in actions %}
+  <a class="palette-item" role="option" href="{{ action.href | safe }}">
+    {{<icon name={action.icon}/>}}
+    <span class="palette-item-text"><strong>{{ action.label }}</strong></span>
+    {{<icon name="arrow-right" class="palette-item-aside"/>}}
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if not books and not documents and not actions %}
+<p class="palette-empty">{{ t(key="search_no_results", query=q) }}</p>
+{% endif %}

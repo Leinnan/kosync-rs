@@ -8,11 +8,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tower_cookies::Cookies;
 
-use crate::{state::AppState, store};
+use web_mev_i18n::LocaleCode;
+
+use crate::{i18n::Tr, state::AppState, store};
 
 use super::{
-    BookLinkView, base_context, book_link, cover_hue, current_user, format_timestamp, is_htmx,
-    render,
+    BookLinkView, base_context, book_link, current_user, format_timestamp, is_htmx, render,
+    title_tint,
 };
 
 /// Maximum hits returned per result group.
@@ -24,10 +26,15 @@ pub(super) struct SearchQuery {
     q: Option<String>,
 }
 
-/// A navigation shortcut offered by the palette.
+/// A navigation shortcut offered by the command palette.
 #[derive(Debug, Serialize)]
 struct ActionView {
-    label: &'static str,
+    /// The label in the page language.
+    label: String,
+    /// The English label, which the palette also matches, so a query in either
+    /// language finds the shortcut.
+    #[serde(skip)]
+    english: String,
     href: &'static str,
     icon: &'static str,
 }
@@ -39,50 +46,35 @@ struct DocumentHit {
     title: String,
     subtitle: String,
     thumb_hash: Option<String>,
-    hue: u16,
+    tint: String,
     percentage: f64,
     synced: String,
 }
 
-/// Navigation shortcuts available to `user`.
-fn actions(user: &store::User) -> Vec<ActionView> {
-    let mut actions = vec![
-        ActionView {
-            label: "Reading progress",
-            href: "/",
-            icon: "activity",
-        },
-        ActionView {
-            label: "Library",
-            href: "/books",
-            icon: "library",
-        },
+/// Navigation shortcuts available to `user`, labelled in `tr`'s language.
+fn actions(state: &AppState, tr: &Tr<'_>, user: &store::User) -> Vec<ActionView> {
+    let english = state.i18n.tr(&LocaleCode::default());
+    let mut wanted = vec![
+        ("search_action_progress", "/", "activity"),
+        ("search_action_library", "/books", "library"),
     ];
     if user.may_upload() {
-        actions.push(ActionView {
-            label: "Upload books",
-            href: "/books/upload",
-            icon: "upload",
-        });
+        wanted.push(("search_action_upload", "/books/upload", "upload"));
     }
     if user.is_administrator {
-        actions.push(ActionView {
-            label: "Manage users",
-            href: "/admin/users",
-            icon: "users",
-        });
+        wanted.push(("search_action_users", "/admin/users", "users"));
     }
-    actions.push(ActionView {
-        label: "Settings",
-        href: "/settings",
-        icon: "settings",
-    });
-    actions.push(ActionView {
-        label: "Connect an e-reader",
-        href: "/help",
-        icon: "help",
-    });
-    actions
+    wanted.push(("search_action_settings", "/settings", "settings"));
+    wanted.push(("search_action_help", "/help", "help"));
+    wanted
+        .into_iter()
+        .map(|(key, href, icon)| ActionView {
+            label: tr.t(key),
+            english: english.t(key),
+            href,
+            icon,
+        })
+        .collect()
 }
 
 /// Build a search hit for a synced document, preferring library metadata.
@@ -98,7 +90,7 @@ async fn document_hit(state: &AppState, doc: store::Document) -> DocumentHit {
         title,
         author,
         has_thumb,
-        hue,
+        tint,
     }) = book
     {
         return DocumentHit {
@@ -106,7 +98,7 @@ async fn document_hit(state: &AppState, doc: store::Document) -> DocumentHit {
             title,
             subtitle: author,
             thumb_hash: has_thumb.then_some(book_hash),
-            hue,
+            tint,
             percentage: doc.percentage,
             synced,
         };
@@ -118,7 +110,7 @@ async fn document_hit(state: &AppState, doc: store::Document) -> DocumentHit {
         .filter(|title| !title.trim().is_empty())
         .unwrap_or_else(|| doc.document_hash.clone());
     DocumentHit {
-        hue: cover_hue(&title),
+        tint: title_tint(&title),
         title,
         subtitle: doc.authors.clone().unwrap_or_else(|| doc.device.clone()),
         document_hash: doc.document_hash,
@@ -149,9 +141,14 @@ pub(super) async fn search(
         .collect();
     let needle = q.to_lowercase();
 
-    let actions: Vec<ActionView> = actions(&user)
+    let tr = user.tr(&state);
+    let actions: Vec<ActionView> = actions(&state, &tr, &user)
         .into_iter()
-        .filter(|action| needle.is_empty() || action.label.to_lowercase().contains(&needle))
+        .filter(|action| {
+            needle.is_empty()
+                || action.label.to_lowercase().contains(&needle)
+                || action.english.to_lowercase().contains(&needle)
+        })
         .collect();
 
     let search = if q.is_empty() { None } else { Some(q.as_str()) };
@@ -185,7 +182,7 @@ pub(super) async fn search(
         document_hits.push(document_hit(&state, doc).await);
     }
 
-    let mut ctx = base_context(&user, "search");
+    let mut ctx = base_context(&state, &user, "search");
     ctx.insert("q", &q);
     ctx.insert("actions", &actions);
     ctx.insert("books", &books);

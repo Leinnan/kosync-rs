@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(key="progress_title") }}{% endblock title %}
+
+{% block content %}
+{% if show_dashboard %}
+<h1 class="greeting">{{ t(key="progress_welcome", name=username) }}</h1>
+
+{% if continue_lead %}
+{% set lead = continue_lead %}
+<section class="continue-panel panel" style="--tint: {{ lead.tint }}" aria-labelledby="continue-heading">
+  <a class="cover-link" href="{% if lead.book_hash %}/books/{{ lead.book_hash }}{% else %}/documents/{{ lead.document_hash }}{% endif %}" tabindex="-1" aria-hidden="true">
+    <figure class="cover-container">
+      {% if lead.thumb_hash %}
+        <img src="/books/{{ lead.thumb_hash }}/thumbnail" alt="">
+      {% else %}
+        <div class="cloth-cover" style="--tint: {{ lead.tint }}"><span>{{ lead.title }}</span>{% if lead.author %}<small>{{ lead.author }}</small>{% endif %}</div>
+      {% endif %}
+    </figure>
+  </a>
+  <div class="continue-body">
+    <div class="continue-head">
+      <p class="eyebrow">{{ t(key="progress_continue") }}</p>
+      <h2 id="continue-heading"><a href="{% if lead.book_hash %}/books/{{ lead.book_hash }}{% else %}/documents/{{ lead.document_hash }}{% endif %}">{{ lead.title }}</a></h2>
+      {% if lead.author %}<p class="byline">{{ lead.author }}</p>{% endif %}
+    </div>
+    <div class="continue-progress">
+      <div class="progress-ruler">
+        <div class="meter" role="progressbar" aria-label="{{ t(key="nav_progress") }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ lead.percentage * 100 }}"><span style="width: {{ lead.percentage * 100 }}%"></span></div>
+      </div>
+      <span class="big-number">{{ lead.percentage | pct }}</span>
+    </div>
+    <p class="continue-meta">{{ t(key="progress_last_read", device=lead.device) }} · <time datetime="{{ lead.synced }}">{{ lead.synced | timeago }}</time></p>
+    <div class="continue-actions">
+      {% if lead.book_hash %}
+      <a href="/books/{{ lead.book_hash }}/download" role="button" class="with-icon">{{<icon name="download"/>}}{{ t(key="book_download") }}</a>
+      {% endif %}
+      <a href="/documents/{{ lead.document_hash }}" role="button" class="secondary with-icon">{{<icon name="history"/>}}{{ t(key="book_view_history") }}</a>
+    </div>
+  </div>
+  {% if also_reading %}
+  <div class="also-reading">
+    <p class="eyebrow">{{ t(key="progress_also_reading") }}</p>
+    {% for item in also_reading %}
+    <a class="mini-book" href="{% if item.book_hash %}/books/{{ item.book_hash }}{% else %}/documents/{{ item.document_hash }}{% endif %}">
+      <span class="cover-container">
+        {% if item.thumb_hash %}<img src="/books/{{ item.thumb_hash }}/thumbnail" alt="" loading="lazy">{% else %}<span class="cloth-cover" style="--tint: {{ item.tint }}"></span>{% endif %}
+      </span>
+      <span>
+        <strong>{{ item.title }}</strong>
+        <span class="meter"><span style="width: {{ item.percentage * 100 }}%"></span></span>
+        <small>{{ item.percentage | pct }} · <time datetime="{{ item.synced }}">{{ item.synced | timeago }}</time></small>
+      </span>
+    </a>
+    {% endfor %}
+    {% if more_reading %}<a class="also-more" href="/?status=in-progress">{{ t(key="common_see_all") }} →</a>{% endif %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if stats %}
+<section class="stats-grid" aria-label="{{ t(key="progress_stats_aria") }}">
+  <a class="stat" href="/?status=in-progress">
+    <span class="stat-label">{{ t(key="progress_reading_now") }}</span>
+    <span class="stat-value">{{ stats.in_progress }}</span>
+    <span class="stat-hint">{{ t(key="progress_reading_now_hint") }}</span>
+  </a>
+  <a class="stat" href="/?status=finished">
+    <span class="stat-label">{{ t(key="status_finished") }}</span>
+    <span class="stat-value">{{ stats.finished }}</span>
+    <span class="stat-hint">{{ t(key="progress_finished_hint") }}</span>
+  </a>
+  <div class="stat">
+    <span class="stat-label">{{ t(key="progress_devices") }}</span>
+    <span class="stat-value">{{ stats.devices_30d }}</span>
+    <span class="stat-hint">{{ t(key="progress_devices_hint") }}</span>
+  </div>
+  <div class="stat stat-wide">
+    <div class="stat-body">
+      <span class="stat-label">{{ t(key="progress_sync_activity") }}</span>
+      <span class="stat-hint"><strong>{{ stats.syncs_7d }}</strong> {{ t(key="progress_syncs_hint", count=stats.syncs_30d) }}</span>
+    </div>
+    <div class="heatmap" role="img" aria-label="{{ t(key="progress_heatmap_aria") }}">
+      {% for cell in stats.heat %}<span class="{{ cell.level }}"{% if cell.label %} title="{{ cell.label }}"{% endif %}></span>{% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if recent_books %}
+<section class="section" aria-labelledby="recent-heading">
+  <div class="section-header">
+    <h2 id="recent-heading">{{ t(key="progress_recently_added") }}</h2>
+    <a href="/books?sort=recent">{{ t(key="nav_library") }} →</a>
+  </div>
+  <div class="rail">
+    {% for book in recent_books %}
+    <article class="book-card">
+      <a href="/books/{{ book.document_hash }}" class="cover-link" tabindex="-1" aria-hidden="true">
+        <figure class="cover-container">
+          {% if book.has_thumb %}
+            <img src="/books/{{ book.document_hash }}/thumbnail" alt="" loading="lazy">
+          {% else %}
+            <div class="cloth-cover" style="--tint: {{ book.tint }}"><span>{{ book.title }}</span>{% if book.author %}<small>{{ book.author }}</small>{% endif %}</div>
+          {% endif %}
+        </figure>
+      </a>
+      <header class="card-header">
+        <h3 class="book-title"><a href="/books/{{ book.document_hash }}">{{ book.title }}</a></h3>
+        {% if book.author %}<p class="book-author">{{ book.author }}</p>{% endif %}
+      </header>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% else %}
+<div class="page-header">
+  <hgroup>
+    <h1>{{ t(key="progress_title") }}</h1>
+    <p>{{ t(key="progress_lead") }}</p>
+  </hgroup>
+</div>
+{% endif %}
+
+<section aria-labelledby="library-heading">
+  <div class="section-header">
+    <h2 id="library-heading">{% if show_dashboard %}{{ t(key="progress_all_documents") }}{% else %}{{ t(key="common_results") }}{% endif %}</h2>
+  </div>
+
+  <form class="toolbar" method="get" action="/"
+        hx-get="/" hx-target="#documents" hx-swap="innerHTML"
+        hx-push-url="true" hx-indicator="#documents"
+        hx-trigger="change, input changed delay:300ms, search">
+    <div class="search-field">
+      {{<icon name="search"/>}}
+      <label class="visually-hidden" for="progress-query">{{ t(key="progress_search_label") }}</label>
+      <input id="progress-query" type="search" name="query"
+             placeholder="{{ t(key="progress_search_placeholder") }}" value="{{ query }}" autocomplete="off">
+    </div>
+
+    <fieldset class="segmented">
+      <legend class="visually-hidden">{{ t(key="filter_status") }}</legend>
+      <label><input type="radio" name="status" value="" {% if not status %}checked{% endif %}>{{ t(key="status_all") }}</label>
+      <label><input type="radio" name="status" value="in-progress" {% if status == "in-progress" %}checked{% endif %}>{{ t(key="status_in_progress") }}</label>
+      <label><input type="radio" name="status" value="finished" {% if status == "finished" %}checked{% endif %}>{{ t(key="status_finished") }}</label>
+    </fieldset>
+
+    <label class="select-inline">
+      <span class="visually-hidden">{{ t(key="filter_sort") }}</span>
+      <select name="sort" aria-label="{{ t(key="filter_sort") }}">
+        <option value="recent" {% if sort != "title" %}selected{% endif %}>{{ t(key="sort_recent_sync") }}</option>
+        <option value="title" {% if sort == "title" %}selected{% endif %}>{{ t(key="sort_title") }}</option>
+      </select>
+    </label>
+
+    <noscript><button type="submit" class="secondary">{{ t(key="common_apply") }}</button></noscript>
+  </form>
+
+  <div id="documents" class="results-region" aria-live="polite">
+    {% include "progress_table.html" %}
+  </div>
+</section>
+{% endblock content %}

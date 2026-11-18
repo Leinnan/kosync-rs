@@ -1,0 +1,11 @@
+-- Every identifier a reader may send for a publication, not only the digests
+-- it had before a cover replacement:
+--   digest  — a former KOReader partial MD5 of the stored file
+--   name    — md5 of a file name a reader is likely to have saved the book as
+--             (the uploaded name, or an OPDS download name built from title
+--             and author); regenerated from the publication's metadata
+--   learned — an identifier a reader was seen sending for this book, or one a
+--             user linked by hand
+-- Progress sent under any of them is filed under the publication's current
+-- document_hash, so each user keeps one record per book.
+ALTER TABLE publication_aliases ADD COLUMN kind TEXT NOT NULL DEFAULT 'digest';

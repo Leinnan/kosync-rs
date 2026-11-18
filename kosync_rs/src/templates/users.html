@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(key="nav_users") }}{% endblock title %}
+
+{% block content %}
+<div class="page-header">
+  <hgroup>
+    <h1>{{ t(key="nav_users") }}</h1>
+    <p>{{ t(key="users_lead") }}</p>
+  </hgroup>
+  <div class="page-actions">
+    <button type="button" class="with-icon" data-dialog-open="create-user">{{<icon name="plus"/>}}{{ t(key="users_new") }}</button>
+  </div>
+</div>
+
+{{<flash error={error | default(value="")} notice={notice | default(value="")}/>}}
+
+<ul class="user-list" aria-label="{{ t(key="users_list_aria") }}">
+  {% for u in users %}
+  <li class="user-row{% if not u.is_active %} inactive{% endif %}">
+    <span class="avatar" aria-hidden="true">{{ u.username | truncate(length=1, end="") | upper }}</span>
+    <div class="user-info">
+      <strong>
+        {{ u.username }}
+        {% if u.is_administrator %}<span class="badge accent">{{<icon name="shield"/>}}{{ t(key="users_admin_badge") }}</span>{% endif %}
+      </strong>
+      <small>
+        {{ t(key="count_documents", n=u.document_count) }}
+        {% if u.last_synced_at %} · {{ t(key="users_last_sync_html", when=u.last_synced_at | timeago, datetime=u.last_synced_at) | safe }}{% else %} · {{ t(key="users_never_synced") }}{% endif %}
+      </small>
+    </div>
+    <div class="user-badges">
+      {% if u.is_active %}
+      <span class="badge success">{{ t(key="users_active") }}</span>
+      {% else %}
+      <span class="badge warning">{{ t(key="users_inactive") }}</span>
+      {% endif %}
+      {% if u.is_administrator or u.can_upload %}
+      <span class="badge success">{{<icon name="upload"/>}}{{ t(key="users_upload_allowed") }}</span>
+      {% else %}
+      <span class="badge error">{{ t(key="users_upload_blocked") }}</span>
+      {% endif %}
+    </div>
+    {% if u.is_administrator %}
+    <span class="protected" title="{{ t(key="users_protected_title") }}">{{<icon name="shield"/>}}<span class="visually-hidden">{{ t(key="users_protected") }}</span></span>
+    {% else %}
+    <details class="menu">
+      <summary aria-label="{{ t(key="users_actions_aria", name=u.username) }}">{{<icon name="more"/>}}</summary>
+      <div class="menu-panel">
+        <form method="post" action="/admin/users/{{ u.username }}/active"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="menu-item">{{<icon name="users"/>}}{% if u.is_active %}{{ t(key="users_deactivate") }}{% else %}{{ t(key="users_activate") }}{% endif %}</button>
+        </form>
+        <form method="post" action="/admin/users/{{ u.username }}/can-upload"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="menu-item">{{<icon name="upload"/>}}{% if u.can_upload %}{{ t(key="users_revoke_upload") }}{% else %}{{ t(key="users_allow_upload") }}{% endif %}</button>
+        </form>
+        <hr>
+        <p class="menu-heading">{{ t(key="settings_reset_submit") }}</p>
+        <form class="menu-form" method="post" action="/admin/users/{{ u.username }}/password"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label class="visually-hidden" for="pw-{{ u.id }}">{{ t(key="users_new_password_for", name=u.username) }}</label>
+          <input id="pw-{{ u.id }}" type="password" name="password" placeholder="{{ t(key="settings_new_password") }}" required autocomplete="new-password">
+          <button type="submit" class="secondary">{{ t(key="users_reset") }}</button>
+        </form>
+        <hr>
+        <form method="post" action="/admin/users/{{ u.username }}/delete"
+              data-confirm="{{ t(key="users_delete_confirm", name=u.username) }}"
+              data-confirm-title="{{ t(key="users_delete_title", name=u.username) }}" data-confirm-label="{{ t(key="users_delete") }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="menu-item menu-item-danger">{{<icon name="trash"/>}}{{ t(key="users_delete_menu") }}</button>
+        </form>
+      </div>
+    </details>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+
+<dialog id="create-user">
+  <article>
+    <header>
+      <h2>{{ t(key="users_create_title") }}</h2>
+    </header>
+    <form method="post" action="/admin/users/create" id="create-user-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>{{ t(key="login_username") }}
+        <input type="text" name="username" required autocomplete="off">
+      </label>
+      <label>{{ t(key="login_password") }}
+        <input type="password" name="password" required autocomplete="new-password">
+      </label>
+      <label>
+        <input type="checkbox" role="switch" name="can_upload" checked>
+        {{ t(key="users_allow_upload_label") }}
+      </label>
+    </form>
+    <footer>
+      <button type="button" class="secondary" data-dialog-close>{{ t(key="common_cancel") }}</button>
+      <button type="submit" form="create-user-form">{{ t(key="users_create") }}</button>
+    </footer>
+  </article>
+</dialog>
+
+<noscript>
+  <article class="card">
+    <h2>{{ t(key="users_create_title") }}</h2>
+    <form method="post" action="/admin/users/create"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>{{ t(key="login_username") }} <input type="text" name="username" required autocomplete="off"></label>
+      <label>{{ t(key="login_password") }} <input type="password" name="password" required autocomplete="new-password"></label>
+      <label><input type="checkbox" name="can_upload" checked> {{ t(key="users_allow_upload_label") }}</label>
+      <button type="submit">{{ t(key="users_create") }}</button>
+    </form>
+  </article>
+</noscript>
+{% endblock content %}

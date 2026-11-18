@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(key="nav_help") }}{% endblock title %}
+
+{% block content %}
+<div class="page-header">
+  <hgroup>
+    <h1>{{ t(key="nav_help") }}</h1>
+    <p>{{ t(key="help_lead") }}</p>
+  </hgroup>
+</div>
+
+<div class="help-grid">
+  <section class="card" aria-labelledby="sync-heading">
+    <h2 id="sync-heading" class="card-title">{{<icon name="sync"/>}}{{ t(key="help_sync_title") }}</h2>
+    <ol class="steps">
+      <li>
+        <strong>{{ t(key="help_step_open") }}</strong>
+        <p>{{ t(key="help_step_open_html") | safe }}</p>
+      </li>
+      <li>
+        <strong>{{ t(key="help_step_address") }}</strong>
+        <div class="copy-field">
+          <code id="sync-url" data-origin="">http://&lt;server&gt;:8090</code>
+          <button type="button" data-copy="sync-url">{{<icon name="copy"/>}}<span class="copy-label">{{ t(key="help_copy") }}</span></button>
+        </div>
+      </li>
+      <li>
+        <strong>{{ t(key="help_step_register") }}</strong>
+        <p>{{ t(key="help_step_register_html") | safe }}</p>
+      </li>
+      <li>
+        <strong>{{ t(key="help_step_sync") }}</strong>
+        <p>{{ t(key="help_step_sync_html") | safe }}</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="card" aria-labelledby="opds-heading">
+    <h2 id="opds-heading" class="card-title">{{<icon name="rss"/>}}{{ t(key="help_opds_title") }}</h2>
+    <p class="muted">{{ t(key="help_opds_lead") }}</p>
+
+    <strong>{{ t(key="help_opds1") }}</strong>
+    <div class="copy-field">
+      <code id="opds1-url" data-origin="/opds/">http://&lt;server&gt;:8090/opds/</code>
+      <button type="button" data-copy="opds1-url">{{<icon name="copy"/>}}<span class="copy-label">{{ t(key="help_copy") }}</span></button>
+    </div>
+    <p></p>
+
+    <strong>{{ t(key="help_opds2") }}</strong>
+    <div class="copy-field">
+      <code id="opds2-url" data-origin="/opds/v2/">http://&lt;server&gt;:8090/opds/v2/</code>
+      <button type="button" data-copy="opds2-url">{{<icon name="copy"/>}}<span class="copy-label">{{ t(key="help_copy") }}</span></button>
+    </div>
+    <p></p>
+
+    <p class="muted"><small>{{ t(key="help_opds_auth") }}</small></p>
+  </section>
+</div>
+
+<section class="card" aria-labelledby="notes-heading">
+  <h2 id="notes-heading" class="card-title">{{<icon name="help"/>}}{{ t(key="help_notes_title") }}</h2>
+  <ul class="note-list">
+    <li>{{ t(key="help_note_root_html") | safe }}</li>
+    <li>{{ t(key="help_note_digest") }}</li>
+    <li>{{ t(key="help_note_tls") }}</li>
+  </ul>
+</section>
+{% endblock content %}

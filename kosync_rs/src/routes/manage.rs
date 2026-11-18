@@ -141,8 +141,11 @@ async fn create_user(
     };
 
     let hash = db::md5_hex(password);
+    let Ok(web_hash) = state.hash_web_password(password).await else {
+        return message(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error");
+    };
     let can_upload = payload.can_upload.unwrap_or(true);
-    match store::create_user(&state.pool, username, &hash, can_upload).await {
+    match store::create_user(&state.pool, username, &hash, Some(&web_hash), can_upload).await {
         Ok(()) => message(StatusCode::OK, "User created successfully"),
         Err(StoreError::Exists) => message(StatusCode::BAD_REQUEST, "User already exists"),
         Err(e) => db_error(&e),
@@ -298,7 +301,10 @@ async fn update_password(
     }
 
     let hash = db::md5_hex(password);
-    match store::set_password(&state.pool, &query.username, &hash).await {
+    let Ok(web_hash) = state.hash_web_password(password).await else {
+        return message(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error");
+    };
+    match store::set_password(&state.pool, &query.username, &hash, &web_hash, None).await {
         Ok(true) => message(StatusCode::OK, "Password changed successfully"),
         Ok(false) => user_not_found(),
         Err(e) => db_error(&e),

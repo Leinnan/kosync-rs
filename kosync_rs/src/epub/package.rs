@@ -31,6 +31,18 @@ const RASTER_TYPES: [&str; 6] = [
 /// Most pictures inspected on a cover page before giving up.
 const MAX_PAGE_IMAGES: usize = 8;
 
+/// A book's cover picture, as stored in its archive.
+#[derive(Debug, Clone)]
+pub(crate) struct Cover {
+    /// The image bytes.
+    pub(crate) bytes: Vec<u8>,
+    /// The image MIME type, from the manifest or guessed from the name.
+    pub(crate) mime: String,
+    /// The archive entry the picture was read from. Like package hrefs it may
+    /// still hold `%XX` escapes that the entry name lacks.
+    pub(crate) path: String,
+}
+
 /// Package metadata read by local element name.
 #[derive(Debug, Default)]
 pub(super) struct Package {
@@ -85,10 +97,7 @@ pub(super) fn read_package<R: Read + Seek>(doc: &mut EpubDoc<R>) -> Package {
 /// `<meta name="cover">` id, then the guide's cover page, then the first spine
 /// page. A page resolves to the first raster picture it shows (Calibre wraps
 /// covers in `<svg><image xlink:href>`).
-pub(super) fn find_cover<R: Read + Seek>(
-    doc: &mut EpubDoc<R>,
-    pkg: &Package,
-) -> Option<(Vec<u8>, String)> {
+pub(super) fn find_cover<R: Read + Seek>(doc: &mut EpubDoc<R>, pkg: &Package) -> Option<Cover> {
     let declared = doc
         .get_cover_id()
         .filter(|id| doc.resources.contains_key(id))
@@ -143,15 +152,18 @@ pub(super) fn find_cover<R: Read + Seek>(
 }
 
 /// Read a picture if its type is one the thumbnail generator decodes.
-fn load_raster<R: Read + Seek>(
-    doc: &mut EpubDoc<R>,
-    paths: &[&str],
-    mime: &str,
-) -> Option<(Vec<u8>, String)> {
+fn load_raster<R: Read + Seek>(doc: &mut EpubDoc<R>, paths: &[&str], mime: &str) -> Option<Cover> {
     if !RASTER_TYPES.contains(&mime) {
         return None;
     }
-    read_any(doc, paths).map(|bytes| (bytes, mime.to_owned()))
+    paths.iter().find_map(|path| {
+        let bytes = doc.get_resource_by_path(path)?;
+        Some(Cover {
+            bytes,
+            mime: mime.to_owned(),
+            path: (*path).to_owned(),
+        })
+    })
 }
 
 /// Read the first archive entry that exists among `paths`.
@@ -227,7 +239,7 @@ fn decoded_path(path: &Path) -> String {
 
 /// Decode `%XX` escapes as in URLs and package paths; malformed escapes stay
 /// as written.
-fn percent_decode(s: &str) -> String {
+pub(super) fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     if !bytes.contains(&b'%') {
         return s.to_owned();

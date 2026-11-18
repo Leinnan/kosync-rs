@@ -12,7 +12,7 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::{library, state::AppState, store};
+use crate::{i18n::Tr, library, state::AppState, store};
 
 use super::{not_found, require_admin, require_uploader, store_error};
 
@@ -28,13 +28,14 @@ pub(super) struct UploadItemResult {
     message: Option<String>,
 }
 
-impl From<library::ImportOutcome> for UploadItemResult {
-    fn from(outcome: library::ImportOutcome) -> Self {
+impl UploadItemResult {
+    /// The result of an import, with its message in `tr`'s language.
+    fn new(tr: &Tr<'_>, outcome: library::ImportOutcome) -> Self {
         Self {
             file_name: outcome.file_name,
             status: outcome.status.as_str(),
             id: outcome.document_hash,
-            message: outcome.message,
+            message: outcome.message.map(|key| tr.t(key)),
         }
     }
 }
@@ -57,7 +58,10 @@ pub(super) async fn upload(
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<UploadResponse>, axum::response::Response> {
-    let _uploader = require_uploader(&state, &headers).await?;
+    let uploader = require_uploader(&state, &headers).await?;
+    let tr = state
+        .i18n
+        .tr(&state.i18n.resolve(uploader.locale.as_deref()));
 
     let mut results = Vec::new();
 
@@ -71,7 +75,7 @@ pub(super) async fn upload(
                     file_name: None,
                     status: "error",
                     id: None,
-                    message: Some("Failed to read upload".to_owned()),
+                    message: Some(tr.t("import_read_failed")),
                 });
                 break;
             }
@@ -86,14 +90,14 @@ pub(super) async fn upload(
                     file_name,
                     status: "error",
                     id: None,
-                    message: Some("Failed to read file".to_owned()),
+                    message: Some(tr.t("import_read_failed")),
                 });
                 continue;
             }
         };
 
-        let outcome = library::import_file(&state, file_name, &data).await;
-        results.push(outcome.into());
+        let outcome = library::import_file(&state, file_name, &data, Some(uploader.id)).await;
+        results.push(UploadItemResult::new(&tr, outcome));
     }
 
     Ok(Json(UploadResponse { results }))

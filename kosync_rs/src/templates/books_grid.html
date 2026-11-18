@@ -1,0 +1,47 @@
+<div class="result-bar" role="status">
+  <span>{{ total_label }}</span>
+  {% if active_filters %}
+  <ul class="filter-chips">
+    {% for chip in active_filters %}
+    <li class="chip">
+      {{ chip.label }}
+      <a class="chip-remove" href="{{ chip.href }}" aria-label="{{ t(key="filter_remove_aria", name=chip.label) }}">&times;</a>
+    </li>
+    {% endfor %}
+  </ul>
+  <a class="clear-link" href="{{ clear_url }}">{{ t(key="filter_clear_all") }}</a>
+  {% endif %}
+</div>
+
+{% if books %}
+<div class="book-grid{% if view == "list" %} list-view{% endif %}">
+  {% for book in books %}
+  {{<book_card book={book}/>}}
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<nav class="pagination" aria-label="{{ t(key="pagination_aria") }}">
+  {% if has_prev %}
+    <a href="/books?page={{ prev_page }}{{ query_suffix }}" hx-get="/books?page={{ prev_page }}{{ query_suffix }}" hx-target="#book-results" hx-push-url="true" role="button" class="secondary">{{<icon name="chevron-left"/>}}{{ t(key="pagination_previous") }}</a>
+  {% else %}<span class="spacer"></span>{% endif %}
+  <span class="pagination-status">{{ t(key="pagination_status", page=page, total=total_pages) }}</span>
+  {% if has_next %}
+    <a href="/books?page={{ next_page }}{{ query_suffix }}" hx-get="/books?page={{ next_page }}{{ query_suffix }}" hx-target="#book-results" hx-push-url="true" role="button" class="secondary">{{ t(key="pagination_next") }}{{<icon name="chevron-right"/>}}</a>
+  {% else %}<span class="spacer"></span>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<div class="empty-state">
+  <span class="empty-icon">{{<icon name="library"/>}}</span>
+  {% if active_filters or query %}
+  <h3>{{ t(key="common_no_matches") }}</h3>
+  <p>{{ t(key="books_no_matches") }}</p>
+  <a href="{{ clear_url }}" role="button" class="secondary">{{ t(key="filter_clear") }}</a>
+  {% else %}
+  <h3>{{ t(key="books_empty_title") }}</h3>
+  <p>{{ t(key="books_empty_lead") }}{% if not can_upload %} {{ t(key="books_empty_ask") }}{% endif %}</p>
+  {% if can_upload %}<a href="/books/upload" role="button">{{ t(key="books_upload") }}</a>{% endif %}
+  {% endif %}
+</div>
+{% endif %}

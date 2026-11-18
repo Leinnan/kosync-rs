@@ -10,12 +10,12 @@
 )]
 
 use axum::{
-    Form,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     response::{IntoResponse, Redirect, Response},
 };
 use serde::{Deserialize, Serialize};
 use tower_cookies::Cookies;
+use web_mev_auth::{CsrfForm, EmptyForm, UiSession};
 
 use crate::{
     db,
@@ -25,7 +25,7 @@ use crate::{
     util::{is_valid_field, is_valid_key_field},
 };
 
-use super::{base_context, current_user, format_timestamp, render};
+use super::{Viewer, base_context, current_user, flash_next, format_timestamp, render, take_flash};
 
 /// A user row prepared for rendering, with the last sync as RFC 3339.
 #[derive(Debug, Serialize)]
@@ -33,17 +33,6 @@ struct UserRow {
     #[serde(flatten)]
     user: UserSummary,
     last_synced_at: String,
-}
-
-/// Query parameters carrying a flash message code between requests.
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct FlashQuery {
-    /// Error message code, if any.
-    #[serde(default)]
-    error: Option<String>,
-    /// Success message code, if any.
-    #[serde(default)]
-    notice: Option<String>,
 }
 
 /// Fields submitted by the account-creation form.
@@ -65,8 +54,8 @@ pub(super) struct PasswordForm {
     password: String,
 }
 
-/// Enforce an authenticated administrator session.
-async fn require_admin(state: &AppState, cookies: &Cookies) -> Result<store::User, Response> {
+/// Enforce an authenticated administrator session for a page.
+async fn require_admin(state: &AppState, cookies: &Cookies) -> Result<Viewer, Response> {
     let Some(user) = current_user(state, cookies).await else {
         return Err(Redirect::to("/login").into_response());
     };
@@ -77,53 +66,51 @@ async fn require_admin(state: &AppState, cookies: &Cookies) -> Result<store::Use
     }
 }
 
-/// Redirect back to the users page with an error flash code.
-fn redirect_error(code: &str) -> Response {
-    Redirect::to(&format!("/admin/users?error={code}")).into_response()
+/// The administrator behind a CSRF-checked form, or a redirect for anyone else.
+fn admin_form(state: &AppState, ui: UiSession<store::User>) -> Result<(Viewer, Cookies), Response> {
+    if ui.session.user.is_administrator {
+        Ok((Viewer::new(state, ui.session), ui.cookies))
+    } else {
+        Err(Redirect::to("/").into_response())
+    }
 }
 
-/// Redirect back to the users page with a success flash code.
-fn redirect_notice(code: &str) -> Response {
-    Redirect::to(&format!("/admin/users?notice={code}")).into_response()
+/// Return to the users page, showing the message for `outcome`: a notice code
+/// on success, an error code otherwise.
+fn back(
+    state: &AppState,
+    viewer: &Viewer,
+    cookies: &Cookies,
+    outcome: Result<&str, &str>,
+) -> Response {
+    let (error, code) = match outcome {
+        Ok(code) => (false, code),
+        Err(code) => (true, code),
+    };
+    flash_next(state, cookies, error, &viewer.tr(state).t(flash_key(code)));
+    Redirect::to("/admin/users").into_response()
 }
 
-/// Map flash codes from the query string to a rendered message.
-fn flash_message(query: &FlashQuery) -> Option<(&'static str, &'static str)> {
-    if let Some(code) = &query.error {
-        let text = match code.as_str() {
-            "invalid" => "Enter a username and a non-empty password.",
-            "exists" => "A user with that name already exists.",
-            "missing" => "That user no longer exists.",
-            "protected" => "The built-in admin account cannot be modified.",
-            "db" => "Something went wrong. Please try again.",
-            _ => return None,
-        };
-        return Some(("error", text));
+/// The translation key of the message for a flash code.
+fn flash_key(code: &str) -> &'static str {
+    match code {
+        "invalid" => "flash_admin_invalid",
+        "exists" => "flash_exists",
+        "missing" => "flash_missing",
+        "protected" => "flash_protected",
+        "created" => "flash_created",
+        "activated" => "flash_activated",
+        "deactivated" => "flash_deactivated",
+        "upload-granted" => "flash_upload-granted",
+        "upload-revoked" => "flash_upload-revoked",
+        "password-reset" => "flash_password-reset",
+        "deleted" => "flash_deleted",
+        _ => "error_generic",
     }
-
-    if let Some(code) = &query.notice {
-        let text = match code.as_str() {
-            "created" => "User created.",
-            "activated" => "User activated.",
-            "deactivated" => "User deactivated.",
-            "upload-granted" => "Upload permission granted.",
-            "upload-revoked" => "Upload permission revoked.",
-            "password-reset" => "Password reset.",
-            "deleted" => "User deleted.",
-            _ => return None,
-        };
-        return Some(("notice", text));
-    }
-
-    None
 }
 
 /// Render the user-management page (administrator only).
-pub(super) async fn list(
-    State(state): State<AppState>,
-    Query(query): Query<FlashQuery>,
-    cookies: Cookies,
-) -> Response {
+pub(super) async fn list(State(state): State<AppState>, cookies: Cookies) -> Response {
     let user = match require_admin(&state, &cookies).await {
         Ok(user) => user,
         Err(response) => return response,
@@ -147,144 +134,159 @@ pub(super) async fn list(
         })
         .collect();
 
-    let mut ctx = base_context(&user, "users");
+    let mut ctx = base_context(&state, &user, "users");
     ctx.insert("users", &rows);
-    if let Some((kind, text)) = flash_message(&query) {
-        ctx.insert(kind, text);
-    }
+    take_flash(&state, &cookies, &mut ctx);
     render(&state, "users.html", &ctx)
 }
 
 /// Render the users page with a generic database-error banner.
-fn render_error(state: &AppState, user: &store::User) -> Response {
-    let mut ctx = base_context(user, "users");
-    ctx.insert("error", "Something went wrong. Please try again.");
+fn render_error(state: &AppState, user: &Viewer) -> Response {
+    let mut ctx = base_context(state, user, "users");
+    ctx.insert("error", &user.tr(state).t("error_generic"));
     render(state, "users.html", &ctx)
 }
 
 /// Create a new account (administrator only).
 pub(super) async fn create(
     State(state): State<AppState>,
-    cookies: Cookies,
-    Form(form): Form<CreateForm>,
+    CsrfForm { ui, form }: CsrfForm<store::User, CreateForm>,
 ) -> Response {
-    if let Err(response) = require_admin(&state, &cookies).await {
-        return response;
-    }
+    let (viewer, cookies) = match admin_form(&state, ui) {
+        Ok(found) => found,
+        Err(response) => return response,
+    };
 
     let username = form.username.trim();
     if !is_valid_key_field(username) || !is_valid_field(&form.password) {
-        return redirect_error("invalid");
+        return back(&state, &viewer, &cookies, Err("invalid"));
     }
 
     let hash = db::md5_hex(&form.password);
+    let Ok(web_hash) = state.hash_web_password(&form.password).await else {
+        return back(&state, &viewer, &cookies, Err("db"));
+    };
     let can_upload = form.can_upload.is_some();
 
-    match store::create_user(&state.pool, username, &hash, can_upload).await {
-        Ok(()) => redirect_notice("created"),
-        Err(StoreError::Exists) => redirect_error("exists"),
-        Err(err) => {
-            err.log();
-            redirect_error("db")
-        }
-    }
+    let outcome =
+        match store::create_user(&state.pool, username, &hash, Some(&web_hash), can_upload).await {
+            Ok(()) => Ok("created"),
+            Err(StoreError::Exists) => Err("exists"),
+            Err(err) => {
+                err.log();
+                Err("db")
+            }
+        };
+    back(&state, &viewer, &cookies, outcome)
 }
 
-/// Toggle a user's active flag (administrator only).
+/// Toggle a user's active flag (administrator only). Deactivating signs the
+/// user out of the web UI.
 pub(super) async fn toggle_active(
     State(state): State<AppState>,
-    cookies: Cookies,
     Path(username): Path<String>,
+    CsrfForm { ui, .. }: CsrfForm<store::User, EmptyForm>,
 ) -> Response {
-    if let Err(response) = require_admin(&state, &cookies).await {
-        return response;
-    }
+    let (viewer, cookies) = match admin_form(&state, ui) {
+        Ok(found) => found,
+        Err(response) => return response,
+    };
     if username == "admin" {
-        return redirect_error("protected");
+        return back(&state, &viewer, &cookies, Err("protected"));
     }
 
-    match store::toggle_active(&state.pool, &username).await {
-        Ok(Some(true)) => redirect_notice("activated"),
-        Ok(Some(false)) => redirect_notice("deactivated"),
-        Ok(None) => redirect_error("missing"),
+    let outcome = match store::toggle_active(&state.pool, &username).await {
+        Ok(Some(true)) => Ok("activated"),
+        Ok(Some(false)) => Ok("deactivated"),
+        Ok(None) => Err("missing"),
         Err(err) => {
             err.log();
-            redirect_error("db")
+            Err("db")
         }
-    }
+    };
+    back(&state, &viewer, &cookies, outcome)
 }
 
 /// Grant or revoke a user's upload permission (administrator only).
 pub(super) async fn toggle_can_upload(
     State(state): State<AppState>,
-    cookies: Cookies,
     Path(username): Path<String>,
+    CsrfForm { ui, .. }: CsrfForm<store::User, EmptyForm>,
 ) -> Response {
-    if let Err(response) = require_admin(&state, &cookies).await {
-        return response;
-    }
+    let (viewer, cookies) = match admin_form(&state, ui) {
+        Ok(found) => found,
+        Err(response) => return response,
+    };
     if username == "admin" {
-        return redirect_error("protected");
+        return back(&state, &viewer, &cookies, Err("protected"));
     }
 
-    match store::toggle_can_upload(&state.pool, &username).await {
-        Ok(Some(true)) => redirect_notice("upload-granted"),
-        Ok(Some(false)) => redirect_notice("upload-revoked"),
-        Ok(None) => redirect_error("missing"),
+    let outcome = match store::toggle_can_upload(&state.pool, &username).await {
+        Ok(Some(true)) => Ok("upload-granted"),
+        Ok(Some(false)) => Ok("upload-revoked"),
+        Ok(None) => Err("missing"),
         Err(err) => {
             err.log();
-            redirect_error("db")
+            Err("db")
         }
-    }
+    };
+    back(&state, &viewer, &cookies, outcome)
 }
 
-/// Reset a user's password (administrator only).
+/// Reset a user's password (administrator only). The user is signed out of the
+/// web UI everywhere.
 pub(super) async fn reset_password(
     State(state): State<AppState>,
-    cookies: Cookies,
     Path(username): Path<String>,
-    Form(form): Form<PasswordForm>,
+    CsrfForm { ui, form }: CsrfForm<store::User, PasswordForm>,
 ) -> Response {
-    if let Err(response) = require_admin(&state, &cookies).await {
-        return response;
-    }
+    let (viewer, cookies) = match admin_form(&state, ui) {
+        Ok(found) => found,
+        Err(response) => return response,
+    };
     if username == "admin" {
-        return redirect_error("protected");
+        return back(&state, &viewer, &cookies, Err("protected"));
     }
     if !is_valid_field(&form.password) {
-        return redirect_error("invalid");
+        return back(&state, &viewer, &cookies, Err("invalid"));
     }
 
     let hash = db::md5_hex(&form.password);
-    match store::set_password(&state.pool, &username, &hash).await {
-        Ok(true) => redirect_notice("password-reset"),
-        Ok(false) => redirect_error("missing"),
+    let Ok(web_hash) = state.hash_web_password(&form.password).await else {
+        return back(&state, &viewer, &cookies, Err("db"));
+    };
+    let outcome = match store::set_password(&state.pool, &username, &hash, &web_hash, None).await {
+        Ok(true) => Ok("password-reset"),
+        Ok(false) => Err("missing"),
         Err(err) => {
             err.log();
-            redirect_error("db")
+            Err("db")
         }
-    }
+    };
+    back(&state, &viewer, &cookies, outcome)
 }
 
 /// Delete a user (administrator only).
 pub(super) async fn delete(
     State(state): State<AppState>,
-    cookies: Cookies,
     Path(username): Path<String>,
+    CsrfForm { ui, .. }: CsrfForm<store::User, EmptyForm>,
 ) -> Response {
-    if let Err(response) = require_admin(&state, &cookies).await {
-        return response;
-    }
+    let (viewer, cookies) = match admin_form(&state, ui) {
+        Ok(found) => found,
+        Err(response) => return response,
+    };
     if username == "admin" {
-        return redirect_error("protected");
+        return back(&state, &viewer, &cookies, Err("protected"));
     }
 
-    match store::delete_user(&state.pool, &username).await {
-        Ok(true) => redirect_notice("deleted"),
-        Ok(false) => redirect_error("missing"),
+    let outcome = match store::delete_user(&state.pool, &username).await {
+        Ok(true) => Ok("deleted"),
+        Ok(false) => Err("missing"),
         Err(err) => {
             err.log();
-            redirect_error("db")
+            Err("db")
         }
-    }
+    };
+    back(&state, &viewer, &cookies, outcome)
 }

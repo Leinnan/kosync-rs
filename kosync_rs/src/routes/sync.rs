@@ -64,7 +64,8 @@ async fn create_user(
         return Err(ApiError::new(ErrorCode::InvalidFields));
     };
 
-    store::create_user(&state.pool, username, password, true)
+    // KOReader sends only the MD5, so the web password is added at first sign-in.
+    store::create_user(&state.pool, username, password, None, true)
         .await
         .map_err(StoreError::into_api_error)?;
 

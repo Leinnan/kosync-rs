@@ -6,7 +6,10 @@ mod common;
 
 use axum::http::StatusCode;
 
-use common::{JSON, app, login, md5, register_plaintext, seed_documents, send, send_html};
+use common::{
+    JSON, app, cookie_named, login, md5, post_login, register_plaintext, seed_documents, send,
+    send_html,
+};
 
 #[tokio::test]
 async fn web_login_page_renders() {
@@ -32,14 +35,7 @@ async fn web_login_rejects_wrong_password() {
     let app = app(false).await;
     register_plaintext(&app, "alice", "secret").await;
 
-    let (status, _, text) = send_html(
-        &app,
-        "POST",
-        "/login",
-        &[(JSON, "application/x-www-form-urlencoded")],
-        "username=alice&password=wrong",
-    )
-    .await;
+    let (status, _, text) = post_login(&app, "username=alice&password=wrong").await;
     assert_eq!(status, StatusCode::OK);
     assert!(text.contains("Invalid username or password"));
 }
@@ -49,20 +45,22 @@ async fn web_login_sets_cookie_and_redirects() {
     let app = app(false).await;
     register_plaintext(&app, "alice", "secret").await;
 
-    let (status, headers, _) = send_html(
-        &app,
-        "POST",
-        "/login",
-        &[(JSON, "application/x-www-form-urlencoded")],
-        "username=alice&password=secret",
-    )
-    .await;
+    let (status, headers, _) = post_login(&app, "username=alice&password=secret").await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(
         headers.get("location").and_then(|v| v.to_str().ok()),
         Some("/")
     );
-    assert!(headers.get("set-cookie").is_some());
+    let session = cookie_named(&headers, "kosync_session").unwrap();
+    let set = headers
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .find(|value| value.starts_with("kosync_session="))
+        .unwrap();
+    assert!(set.contains("HttpOnly"), "{set}");
+    assert!(set.contains("SameSite=Lax"), "{set}");
+    assert!(session.len() > "kosync_session=".len());
 }
 
 #[tokio::test]
@@ -70,22 +68,7 @@ async fn web_dashboard_shows_paginated_progress() {
     let app = app(false).await;
     seed_documents(&app, "alice", "secret", 25).await;
 
-    let (_, headers, _) = send_html(
-        &app,
-        "POST",
-        "/login",
-        &[(JSON, "application/x-www-form-urlencoded")],
-        "username=alice&password=secret",
-    )
-    .await;
-    let cookie = headers
-        .get("set-cookie")
-        .and_then(|v| v.to_str().ok())
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_owned();
+    let cookie = login(&app, "alice", "secret").await;
 
     let (status, _, text) = send_html(&app, "GET", "/", &[("cookie", cookie.as_str())], "").await;
     assert_eq!(status, StatusCode::OK);
@@ -105,26 +88,27 @@ async fn web_logout_clears_session() {
     let app = app(false).await;
     register_plaintext(&app, "alice", "secret").await;
 
-    let (_, headers, _) = send_html(
+    let cookie = login(&app, "alice", "secret").await;
+
+    let (status, headers, _) = send_html(
         &app,
         "POST",
-        "/login",
-        &[(JSON, "application/x-www-form-urlencoded")],
-        "username=alice&password=secret",
+        "/logout",
+        &[
+            ("cookie", cookie.as_str()),
+            (JSON, "application/x-www-form-urlencoded"),
+        ],
+        "",
     )
     .await;
-    let cookie = headers
-        .get("set-cookie")
-        .and_then(|v| v.to_str().ok())
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_owned();
-
-    let (status, _, _) =
-        send_html(&app, "GET", "/logout", &[("cookie", cookie.as_str())], "").await;
     assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers.get("location").unwrap(), "/login");
+
+    // The session is gone from the database, so the old cookie no longer works.
+    let (status, headers, _) =
+        send_html(&app, "GET", "/", &[("cookie", cookie.as_str())], "").await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers.get("location").unwrap(), "/login");
 }
 
 #[tokio::test]
@@ -193,7 +177,7 @@ async fn web_dashboard_shows_reading_stats() {
     assert_eq!(status, StatusCode::OK);
     assert!(text.contains("Reading statistics"));
     assert!(text.contains("Sync activity"));
-    assert!(text.contains(r#"class="sparkline""#));
+    assert!(text.contains(r#"class="heatmap""#));
 }
 
 #[tokio::test]
@@ -247,4 +231,31 @@ async fn web_continue_reading_is_independent_of_the_listing_page() {
     assert!(text.contains("Continue reading"));
     assert!(text.contains("Zebra Tales"));
     assert!(text.contains(r#"href="/documents/zebra""#));
+}
+
+/// The custom properties declared in the first CSS block that starts with
+/// `selector`, in order.
+fn declarations_after(css: &str, selector: &str) -> Vec<String> {
+    let start = css.find(selector).unwrap() + selector.len();
+    let body = &css[start..];
+    let open = body.find('{').unwrap();
+    let close = body[open..].find('}').unwrap() + open;
+    body[open + 1..close]
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("--") || line.starts_with("color-scheme"))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn dark_theme_tokens_match_for_the_os_preference_and_the_explicit_choice() {
+    let css = include_str!("../src/static/app.css");
+    let explicit = declarations_after(css, ":root[data-theme=\"dark\"]");
+    let preferred = declarations_after(css, ":root:not([data-theme=\"light\"])");
+    assert!(explicit.len() > 20, "the dark theme declares its tokens");
+    assert_eq!(
+        explicit, preferred,
+        "both dark blocks must declare the same tokens"
+    );
 }

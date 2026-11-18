@@ -25,6 +25,7 @@ use serde_json::Value;
 use crate::{
     basic_auth,
     error::ApiError,
+    i18n::Tr,
     state::AppState,
     store::{self, Document, Publication, StoreError},
     util::now_unix,
@@ -277,6 +278,11 @@ async fn require_uploader(state: &AppState, headers: &HeaderMap) -> Result<store
         .map_err(auth_error)
 }
 
+/// Feed text in `user`'s saved language, else the request's.
+pub(super) fn opds_tr<'a>(state: &'a AppState, user: &store::User) -> Tr<'a> {
+    state.i18n.tr(&state.i18n.resolve(user.locale.as_deref()))
+}
+
 /// The scheme and host that absolute feed links start with.
 pub(super) struct BaseUrl(pub(super) String);
 
@@ -306,7 +312,7 @@ fn base_url(state: &AppState, parts: &Parts) -> String {
     let trusted = parts
         .extensions
         .get::<ConnectInfo<SocketAddr>>()
-        .is_some_and(|ConnectInfo(addr)| state.trusted_proxies.contains(&addr.ip()));
+        .is_some_and(|ConnectInfo(addr)| state.config.trusted_proxies.contains(&addr.ip()));
     let forwarded = |name: &str| trusted.then(|| first_value(headers, name)).flatten();
 
     let scheme = forwarded("x-forwarded-proto")
@@ -511,13 +517,14 @@ async fn nav_feed(
     headers: HeaderMap,
     base: BaseUrl,
 ) -> Result<Json<Value>, Response> {
-    let _user = require_user(&state, &headers).await?;
+    let user = require_user(&state, &headers).await?;
+    let tr = opds_tr(&state, &user);
     let base = base.0;
 
     let body = serde_json::json!({
         "@context": FEED_CONTEXT,
         "metadata": {
-            "title": "kosync-rs library",
+            "title": tr.t("opds_library"),
             "modified": rfc3339(now_unix()),
         },
         "links": [
@@ -531,33 +538,33 @@ async fn nav_feed(
         ],
         "navigation": [
             {
-                "title": "All books",
+                "title": tr.t("opds_all_books"),
                 "href": format!("{base}/opds/v2/publications"),
                 "type": OPDS_JSON_TYPE,
             },
             {
-                "title": Shelf::Recent.title(),
+                "title": tr.t(Shelf::Recent.title_key()),
                 "href": format!("{base}/opds/v2/{}", Shelf::Recent.segment()),
                 "type": OPDS_JSON_TYPE,
                 "rel": "http://opds-spec.org/sort/new",
             },
             {
-                "title": Shelf::Reading.title(),
+                "title": tr.t(Shelf::Reading.title_key()),
                 "href": format!("{base}/opds/v2/{}", Shelf::Reading.segment()),
                 "type": OPDS_JSON_TYPE,
             },
             {
-                "title": "Authors",
+                "title": tr.t("opds_authors"),
                 "href": format!("{base}/opds/v2/authors"),
                 "type": OPDS_JSON_TYPE,
             },
             {
-                "title": "Genres",
+                "title": tr.t("opds_genres"),
                 "href": format!("{base}/opds/v2/genres"),
                 "type": OPDS_JSON_TYPE,
             },
             {
-                "title": "Series",
+                "title": tr.t("opds_series"),
                 "href": format!("{base}/opds/v2/series"),
                 "type": OPDS_JSON_TYPE,
             },
@@ -593,7 +600,7 @@ async fn publication_feed(
             &state,
             user.id,
             &base,
-            "kosync-rs library".to_owned(),
+            opds_tr(&state, &user).t("opds_library"),
             "/opds/v2/publications",
             search,
             total,
@@ -614,11 +621,11 @@ pub(super) enum Shelf {
 }
 
 impl Shelf {
-    /// The feed title.
-    pub(super) const fn title(self) -> &'static str {
+    /// The translation key of the feed title.
+    pub(super) const fn title_key(self) -> &'static str {
         match self {
-            Self::Recent => "Recently added",
-            Self::Reading => "Currently reading",
+            Self::Recent => "opds_recent",
+            Self::Reading => "opds_reading",
         }
     }
 
@@ -700,7 +707,7 @@ async fn shelf_feed(
             &state,
             user.id,
             &base.0,
-            shelf.title().to_owned(),
+            opds_tr(&state, &user).t(shelf.title_key()),
             &format!("/opds/v2/{}", shelf.segment()),
             None,
             total,
@@ -717,12 +724,17 @@ async fn author_navigation_feed(
     headers: HeaderMap,
     base: BaseUrl,
 ) -> Result<Json<Value>, Response> {
-    let _user = require_user(&state, &headers).await?;
+    let user = require_user(&state, &headers).await?;
+    let tr = opds_tr(&state, &user);
     let groups = store::list_authors(&state.pool)
         .await
         .map_err(|err| store_error(&err))?;
     Ok(Json(group_navigation(
-        &base.0, "Authors", "authors", groups,
+        &tr,
+        &base.0,
+        "opds_authors",
+        "authors",
+        groups,
     )))
 }
 
@@ -732,11 +744,18 @@ async fn genre_navigation_feed(
     headers: HeaderMap,
     base: BaseUrl,
 ) -> Result<Json<Value>, Response> {
-    let _user = require_user(&state, &headers).await?;
+    let user = require_user(&state, &headers).await?;
+    let tr = opds_tr(&state, &user);
     let groups = store::list_genres(&state.pool)
         .await
         .map_err(|err| store_error(&err))?;
-    Ok(Json(group_navigation(&base.0, "Genres", "genres", groups)))
+    Ok(Json(group_navigation(
+        &tr,
+        &base.0,
+        "opds_genres",
+        "genres",
+        groups,
+    )))
 }
 
 /// Render the OPDS 2.0 series navigation feed.
@@ -745,11 +764,18 @@ async fn series_navigation_feed(
     headers: HeaderMap,
     base: BaseUrl,
 ) -> Result<Json<Value>, Response> {
-    let _user = require_user(&state, &headers).await?;
+    let user = require_user(&state, &headers).await?;
+    let tr = opds_tr(&state, &user);
     let groups = store::list_series(&state.pool)
         .await
         .map_err(|err| store_error(&err))?;
-    Ok(Json(group_navigation(&base.0, "Series", "series", groups)))
+    Ok(Json(group_navigation(
+        &tr,
+        &base.0,
+        "opds_series",
+        "series",
+        groups,
+    )))
 }
 
 /// Render the OPDS 2.0 acquisition feed for a named author.
@@ -767,7 +793,7 @@ async fn author_publication_feed(
         name,
         query,
         store::GroupKind::Author,
-        "Author",
+        "opds_author",
         "authors",
     )
     .await
@@ -788,7 +814,7 @@ async fn genre_publication_feed(
         name,
         query,
         store::GroupKind::Genre,
-        "Genre",
+        "opds_genre",
         "genres",
     )
     .await
@@ -809,16 +835,18 @@ async fn series_publication_feed(
         name,
         query,
         store::GroupKind::Series,
-        "Series",
+        "opds_series_label",
         "series",
     )
     .await
 }
 
-/// Render a navigation feed containing named publication groups.
+/// Render a navigation feed containing named publication groups, titled with
+/// the translation of `title_key`.
 fn group_navigation(
+    tr: &Tr<'_>,
     base: &str,
-    title: &str,
+    title_key: &str,
     segment: &str,
     groups: Vec<store::GroupCount>,
 ) -> Value {
@@ -838,7 +866,7 @@ fn group_navigation(
     serde_json::json!({
         "@context": FEED_CONTEXT,
         "metadata": {
-            "title": format!("kosync-rs library: {title}"),
+            "title": tr.args("opds_library_section", &[("title", &tr.t(title_key))]),
             "numberOfItems": navigation.len(),
             "modified": rfc3339(now_unix()),
         },
@@ -858,7 +886,7 @@ async fn grouped_publication_feed(
     name: String,
     query: PageQuery,
     kind: store::GroupKind,
-    label: &str,
+    label_key: &str,
     segment: &str,
 ) -> Result<Json<OpdsFeed>, Response> {
     let user = require_user(&state, &headers).await?;
@@ -891,7 +919,13 @@ async fn grouped_publication_feed(
             &state,
             user.id,
             &base,
-            format!("{label}: {name}"),
+            opds_tr(&state, &user).args(
+                "opds_group_title",
+                &[
+                    ("label", &opds_tr(&state, &user).t(label_key)),
+                    ("name", &name),
+                ],
+            ),
             &endpoint,
             None,
             total,

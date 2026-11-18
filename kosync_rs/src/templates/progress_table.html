@@ -1,0 +1,86 @@
+<div class="result-bar" role="status">
+  <span>{{ total_label }}</span>
+  {% if active_filters %}
+  <ul class="filter-chips">
+    {% for chip in active_filters %}
+    <li class="chip">
+      {{ chip.label }}
+      <a class="chip-remove" href="{{ chip.href }}" aria-label="{{ t(key="filter_remove_aria", name=chip.label) }}">&times;</a>
+    </li>
+    {% endfor %}
+  </ul>
+  <a class="clear-link" href="{{ clear_url }}">{{ t(key="filter_clear_all") }}</a>
+  {% endif %}
+</div>
+
+{% if documents %}
+<ul class="doc-list">
+  {% for doc in documents %}
+  <li class="doc-row document_row">
+    {% if doc.book %}
+      <div class="doc-thumb">
+        {% if doc.book.has_thumb %}
+          <img src="/books/{{ doc.book.document_hash }}/thumbnail" alt="" loading="lazy">
+        {% else %}
+          <div class="cloth-cover" style="--tint: {{ doc.book.tint }}"></div>
+        {% endif %}
+      </div>
+      <div class="doc-main">
+        <a class="stretched-link doc-title" href="/books/{{ doc.book.document_hash }}">{{ doc.book.title }}</a>
+        <span class="doc-sub">
+          {% if doc.book.author %}<span>{{ doc.book.author }}</span>{% endif %}
+          <a class="history-link" href="/documents/{{ doc.document_hash }}">{{ t(key="progress_view_history") }}</a>
+        </span>
+      </div>
+    {% elif doc.fallback_title %}
+      <div class="doc-thumb"><div class="cloth-cover" style="--tint: {{ doc.tint }}"></div></div>
+      <div class="doc-main">
+        <a class="stretched-link doc-title" href="/documents/{{ doc.document_hash }}">{{ doc.fallback_title }}</a>
+        {% if doc.fallback_author %}<span class="doc-sub"><span>{{ doc.fallback_author }}</span></span>{% endif %}
+      </div>
+    {% else %}
+      <div class="doc-thumb unknown">{{<icon name="file"/>}}</div>
+      <div class="doc-main">
+        <a class="stretched-link doc-title" href="/documents/{{ doc.document_hash }}"><code>{{ doc.document_hash }}</code></a>
+        <span class="doc-sub"><span>{{ t(key="progress_not_in_library") }}</span></span>
+      </div>
+    {% endif %}
+    <div class="doc-progress" title="{{ doc.percent }}">
+      <div class="meter{% if doc.percentage >= 0.99 %} finished{% endif %}" role="progressbar"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ doc.percentage * 100 }}"
+           aria-label="{{ t(key="nav_progress") }}"><span style="width: {{ doc.percentage * 100 }}%"></span></div>
+      <span class="pct">{{ doc.percentage | pct }}</span>
+    </div>
+    <div class="doc-meta">
+      <span class="device-label">{{<icon name="device"/>}}{{ doc.device }}</span>
+      <time datetime="{{ doc.synced }}">{{ doc.synced | timeago }}</time>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+
+{% if total_pages > 1 %}
+<nav class="pagination" aria-label="{{ t(key="pagination_aria") }}">
+  {% if has_prev %}
+    <a href="/?page={{ prev_page }}{{ query_suffix }}" hx-get="/?page={{ prev_page }}{{ query_suffix }}" hx-target="#documents" hx-push-url="true" role="button" class="secondary">{{<icon name="chevron-left"/>}}{{ t(key="pagination_previous") }}</a>
+  {% else %}<span class="spacer"></span>{% endif %}
+  <span class="pagination-status">{{ t(key="pagination_status", page=page, total=total_pages) }}</span>
+  {% if has_next %}
+    <a href="/?page={{ next_page }}{{ query_suffix }}" hx-get="/?page={{ next_page }}{{ query_suffix }}" hx-target="#documents" hx-push-url="true" role="button" class="secondary">{{ t(key="pagination_next") }}{{<icon name="chevron-right"/>}}</a>
+  {% else %}<span class="spacer"></span>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<div class="empty-state">
+  <span class="empty-icon">{{<icon name="sync"/>}}</span>
+  {% if active_filters or query %}
+  <h3>{{ t(key="common_no_matches") }}</h3>
+  <p>{{ t(key="progress_no_matches") }}</p>
+  <a href="{{ clear_url }}" role="button" class="secondary">{{ t(key="filter_clear") }}</a>
+  {% else %}
+  <h3>{{ t(key="progress_empty_title") }}</h3>
+  <p>{{ t(key="progress_empty_html") | safe }}</p>
+  <a href="/help" role="button" class="secondary">{{ t(key="login_help_link") }}</a>
+  {% endif %}
+</div>
+{% endif %}

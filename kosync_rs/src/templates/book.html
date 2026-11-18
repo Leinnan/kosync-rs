@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block title %}{{ book.title }}{% endblock title %}
+
+{% block content %}
+<nav class="breadcrumb" aria-label="{{ t(key="book_breadcrumb_aria") }}">
+  <a href="/books">{{<icon name="chevron-left"/>}}{{ t(key="nav_library") }}</a>
+  {% if book.series %}
+    <span class="separator">/</span>
+    <a href="/books?series={{ book.series | urlencode }}&amp;sort=series">{{ book.series }}</a>
+  {% endif %}
+</nav>
+
+{{<flash error={error | default(value="")} notice={notice | default(value="")}/>}}
+
+<section class="book-hero panel" style="--tint: {{ book.tint }}">
+  <figure class="cover-container">
+    {% if book.has_cover %}
+      <img src="/books/{{ book.document_hash }}/cover" alt="{{ t(key="book_cover_alt", title=book.title) }}">
+    {% else %}
+      <div class="cloth-cover" style="--tint: {{ book.tint }}"><span>{{ book.title }}</span>{% if book.authors %}<small>{{ book.authors }}</small>{% endif %}</div>
+    {% endif %}
+  </figure>
+
+  <div class="book-hero-body">
+    <div class="book-hero-head">
+      {% if book.series %}
+      <p class="eyebrow">
+        {% if book.series_index %}{{ t(key="book_series_position", index=book.series_index) }} {% endif %}<a href="/books?series={{ book.series | urlencode }}&amp;sort=series">{{ book.series }}</a>
+      </p>
+      {% endif %}
+      <h1>{{ book.title }}</h1>
+      {% if book.authors %}<p class="book-byline">{{ t(key="book_by", authors=book.authors) }}</p>{% endif %}
+    </div>
+
+    <div class="book-actions">
+      <a href="/books/{{ book.document_hash }}/download" role="button" class="with-icon">{{<icon name="download"/>}}{{ t(key="book_download") }}</a>
+      {% if book.history_hash %}
+      <a href="/documents/{{ book.history_hash }}" role="button" class="secondary with-icon">{{<icon name="history"/>}}{{ t(key="book_view_history") }}</a>
+      {% endif %}
+      {% if is_admin or book.can_edit_cover %}
+      <details class="menu">
+        <summary aria-label="{{ t(key="book_more_actions") }}">{{<icon name="more"/>}}</summary>
+        <div class="menu-panel">
+          {% if book.can_edit_cover %}
+          <button type="button" class="menu-item" data-dialog-open="cover_modal">{{<icon name="upload"/>}}{{ t(key="book_cover_menu") }}</button>
+          {% endif %}
+          {% if is_admin %}
+          <button type="button" class="menu-item menu-item-danger" data-dialog-open="delete_modal">{{<icon name="trash"/>}}{{ t(key="book_delete_menu") }}</button>
+          {% endif %}
+        </div>
+      </details>
+      {% endif %}
+    </div>
+
+    <div class="hero-progress">
+      {% if book.has_progress %}
+      <div class="hero-progress-head">
+        <span>{% if book.synced %}{% if book.device %}{{ t(key="book_synced_from_html", when=book.synced | timeago, datetime=book.synced, device=book.device) | safe }}{% else %}{{ t(key="book_synced_html", when=book.synced | timeago, datetime=book.synced) | safe }}{% endif %}{% else %}{{ t(key="book_your_progress") }}{% endif %}</span>
+        <span class="big-number">{{ book.percentage | pct }}</span>
+      </div>
+      <div class="progress-ruler">
+        <div class="meter{% if book.percentage >= 0.99 %} finished{% endif %}" role="progressbar" aria-label="{{ t(key="book_percent_read", percent=book.percent) }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ book.percentage * 100 }}"><span style="width: {{ book.percentage * 100 }}%"></span></div>
+      </div>
+      {% else %}
+      <div class="hero-progress-head"><span><strong>{{ t(key="book_not_started") }}</strong> · {{ t(key="book_not_started_lead") }}</span></div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<nav class="section-nav" aria-label="{{ t(key="book_sections_aria") }}">
+  <a href="#overview" aria-current="page">{{ t(key="book_overview") }}</a>
+  {% if book.history_hash %}<a href="/documents/{{ book.history_hash }}">{{ t(key="doc_sync_history") }}</a>{% endif %}
+  <a href="#details">{{ t(key="book_details") }}</a>
+</nav>
+
+<div class="book-body" id="overview">
+  <div>
+    {% if book.description %}
+    <section aria-labelledby="about-heading">
+      <h2 id="about-heading" class="visually-hidden">{{ t(key="book_description") }}</h2>
+      <div class="book-description">{{ book.description }}</div>
+    </section>
+    {% endif %}
+
+    {% if book.genres %}
+    <ul class="filter-chips book-genres">
+      {% for genre in book.genres %}
+      <li><a class="chip" href="/books?genre={{ genre | urlencode }}">{{ genre }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if series_books %}
+    <section class="section series-rail" aria-labelledby="series-heading">
+      <div class="section-header">
+        <h2 id="series-heading">{{ t(key="book_more_in", series=book.series) }}</h2>
+        <a href="/books?series={{ book.series | urlencode }}&amp;sort=series">{{ t(key="book_view_series") }}</a>
+      </div>
+      <div class="rail">
+        {% for sibling in series_books %}
+        {% set is_current = sibling.document_hash == book.document_hash %}
+        {{<book_card book={sibling} current={is_current}/>}}
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  </div>
+
+  <aside class="book-aside">
+    {% if sync.events %}
+    <section class="card" aria-labelledby="syncs-heading">
+      <h2 id="syncs-heading" class="label">{{ t(key="doc_recent_syncs") }}</h2>
+      <ul class="event-list">
+        {% for event in sync.events %}
+        <li>
+          <span class="swatch dev-{{ event.colour }}"></span>
+          <span class="event-device">
+            {{ event.device }}
+            <small><time datetime="{{ event.synced }}" title="{{ event.synced | datefmt }}">{{ event.synced | timeago }}</time></small>
+          </span>
+          <span class="event-value">
+            {{ event.percentage | pct }}
+            {% if event.delta %}<span class="delta {{ event.trend }}">{{ event.delta }}</span>{% endif %}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% if sync.devices | length > 1 %}
+      <div class="share-bar" role="img" aria-label="{{ t(key="doc_share_aria") }}">
+        {% for device in sync.devices %}{% if device.share > 0 %}<span class="dev-{{ device.colour }}" style="width: {{ device.share }}%" title="{{ device.device }}: {{ device.contribution }}"></span>{% endif %}{% endfor %}
+      </div>
+      <ul class="legend">
+        {% for device in sync.devices %}
+        <li class="dev-{{ device.colour }}"><span class="swatch"></span>{{ device.device }} · {{ device.contribution }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    <section id="details" aria-labelledby="details-heading">
+      <h2 id="details-heading" class="label">{{ t(key="book_details") }}</h2>
+      <dl class="meta-list">
+        {% if book.language %}<dt>{{ t(key="books_language") }}</dt><dd>{{ book.language }}</dd>{% endif %}
+        {% if book.publisher %}<dt>{{ t(key="book_publisher") }}</dt><dd>{{ book.publisher }}</dd>{% endif %}
+        {% if book.published %}<dt>{{ t(key="book_published") }}</dt><dd>{{ book.published }}</dd>{% endif %}
+        {% if book.isbn %}<dt>ISBN</dt><dd>{{ book.isbn }}</dd>{% endif %}
+        <dt>{{ t(key="book_file_size") }}</dt><dd>{{ book.file_size }}</dd>
+        <dt>{{ t(key="book_added") }}</dt><dd><time datetime="{{ book.created }}" title="{{ book.created | datefmt }}">{{ book.created | timeago }}</time></dd>
+        <dt>{{ t(key="book_updated") }}</dt><dd><time datetime="{{ book.updated }}" title="{{ book.updated | datefmt }}">{{ book.updated | timeago }}</time></dd>
+      </dl>
+
+      <details class="tech-details">
+        <summary>{{ t(key="book_technical") }}</summary>
+        {% if book.progress %}<code>{{ t(key="book_position", value=book.progress) }}</code>{% endif %}
+        {% if book.identifier %}<code>{{ t(key="book_identifier", value=book.identifier) }}</code>{% endif %}
+        <code>{{ t(key="book_hash", value=book.document_hash) }}</code>
+      </details>
+    </section>
+  </aside>
+</div>
+
+{% if book.can_edit_cover %}
+<dialog id="cover_modal">
+  <article>
+    <header>
+      <h3>{{ t(key="book_cover_title") }}</h3>
+    </header>
+    <form action="/books/{{ book.document_hash }}/cover" method="post" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <p>{{ t(key="book_cover_lead_html", title=book.title) | safe }}</p>
+      <label for="cover-file">{{ t(key="book_cover_file_label") }}</label>
+      <input id="cover-file" type="file" name="cover" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,image/tiff" required>
+      <footer>
+        <button type="button" class="secondary" data-dialog-close>{{ t(key="common_cancel") }}</button>
+        <button type="submit">{{ t(key="book_cover_submit") }}</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endif %}
+
+{% if is_admin %}
+<dialog id="delete_modal">
+  <article>
+    <header>
+      <h3>{{ t(key="book_delete_title") }}</h3>
+    </header>
+    <p>{{ t(key="book_delete_html", title=book.title) | safe }}</p>
+    <footer>
+      <button type="button" class="secondary" data-dialog-close>{{ t(key="common_cancel") }}</button>
+      <form action="/books/{{ book.document_hash }}/delete" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="danger">{{ t(key="book_delete") }}</button>
+      </form>
+    </footer>
+  </article>
+</dialog>
+{% endif %}
+{% endblock content %}

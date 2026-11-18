@@ -12,11 +12,11 @@ use quick_xml::{
     events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
 };
 
-use crate::{state::AppState, store, util::now_unix};
+use crate::{i18n::Tr, state::AppState, store, util::now_unix};
 
 use super::{
-    BaseUrl, PER_PAGE, PageQuery, Shelf, page_for, percent_encode_path_segment, require_user,
-    rfc3339, store_error,
+    BaseUrl, PER_PAGE, PageQuery, Shelf, opds_tr, page_for, percent_encode_path_segment,
+    require_user, rfc3339, store_error,
 };
 
 const ATOM_NAMESPACE: &str = "http://www.w3.org/2005/Atom";
@@ -41,14 +41,18 @@ pub(super) async fn nav_feed(
     headers: HeaderMap,
     base: BaseUrl,
 ) -> Response {
-    let _user = match require_user(&state, &headers).await {
+    let user = match require_user(&state, &headers).await {
         Ok(user) => user,
         Err(response) => return response,
     };
     let base = base.0;
     let updated = rfc3339(now_unix());
 
-    atom_result(root_navigation_xml(&base, &updated))
+    atom_result(root_navigation_xml(
+        &opds_tr(&state, &user),
+        &base,
+        &updated,
+    ))
 }
 
 /// Render the `OpenSearch` description that tells clients how to search.
@@ -57,11 +61,11 @@ pub(super) async fn opensearch_description(
     headers: HeaderMap,
     base: BaseUrl,
 ) -> Response {
-    let _user = match require_user(&state, &headers).await {
+    let user = match require_user(&state, &headers).await {
         Ok(user) => user,
         Err(response) => return response,
     };
-    match opensearch_xml(&base.0) {
+    match opensearch_xml(&opds_tr(&state, &user), &base.0) {
         Ok(xml) => (
             [(
                 "content-type",
@@ -75,14 +79,14 @@ pub(super) async fn opensearch_description(
 }
 
 /// Build the `OpenSearch` description document.
-fn opensearch_xml(base: &str) -> io::Result<Vec<u8>> {
+fn opensearch_xml(tr: &Tr<'_>, base: &str) -> io::Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
     let mut root = BytesStart::new("OpenSearchDescription");
     root.push_attribute(("xmlns", OPENSEARCH_NAMESPACE));
     writer.write_event(Event::Start(root))?;
     text(&mut writer, "ShortName", "kosync-rs")?;
-    text(&mut writer, "Description", "Search the kosync-rs library")?;
+    text(&mut writer, "Description", &tr.t("opds_search_description"))?;
     text(&mut writer, "InputEncoding", "UTF-8")?;
     text(&mut writer, "OutputEncoding", "UTF-8")?;
     let mut url = BytesStart::new("Url");
@@ -101,7 +105,7 @@ pub(super) async fn publication_feed(
     base: BaseUrl,
     Query(query): Query<PageQuery>,
 ) -> Response {
-    let _user = match require_user(&state, &headers).await {
+    let user = match require_user(&state, &headers).await {
         Ok(user) => user,
         Err(response) => return response,
     };
@@ -122,7 +126,7 @@ pub(super) async fn publication_feed(
 
     atom_result(acquisition_xml(
         &base,
-        "kosync-rs library",
+        &opds_tr(&state, &user).t("opds_library"),
         "/opds/publications",
         search,
         total,
@@ -169,7 +173,7 @@ async fn shelf_feed(
     };
     atom_result(acquisition_xml(
         &base.0,
-        shelf.title(),
+        &opds_tr(&state, &user).t(shelf.title_key()),
         &format!("/opds/{}", shelf.segment()),
         None,
         total,
@@ -184,7 +188,7 @@ pub(super) async fn author_navigation_feed(
     headers: HeaderMap,
     base: BaseUrl,
 ) -> Response {
-    let _user = match require_user(&state, &headers).await {
+    let user = match require_user(&state, &headers).await {
         Ok(user) => user,
         Err(response) => return response,
     };
@@ -192,7 +196,13 @@ pub(super) async fn author_navigation_feed(
         Ok(groups) => groups,
         Err(err) => return store_error(&err),
     };
-    atom_result(group_navigation_xml(&base.0, "Authors", "authors", &groups))
+    atom_result(group_navigation_xml(
+        &opds_tr(&state, &user),
+        &base.0,
+        "opds_authors",
+        "authors",
+        &groups,
+    ))
 }
 
 /// Render the OPDS 1.x genre navigation feed.
@@ -201,7 +211,7 @@ pub(super) async fn genre_navigation_feed(
     headers: HeaderMap,
     base: BaseUrl,
 ) -> Response {
-    let _user = match require_user(&state, &headers).await {
+    let user = match require_user(&state, &headers).await {
         Ok(user) => user,
         Err(response) => return response,
     };
@@ -209,7 +219,13 @@ pub(super) async fn genre_navigation_feed(
         Ok(groups) => groups,
         Err(err) => return store_error(&err),
     };
-    atom_result(group_navigation_xml(&base.0, "Genres", "genres", &groups))
+    atom_result(group_navigation_xml(
+        &opds_tr(&state, &user),
+        &base.0,
+        "opds_genres",
+        "genres",
+        &groups,
+    ))
 }
 
 /// Render the OPDS 1.x series navigation feed.
@@ -218,7 +234,7 @@ pub(super) async fn series_navigation_feed(
     headers: HeaderMap,
     base: BaseUrl,
 ) -> Response {
-    let _user = match require_user(&state, &headers).await {
+    let user = match require_user(&state, &headers).await {
         Ok(user) => user,
         Err(response) => return response,
     };
@@ -226,7 +242,13 @@ pub(super) async fn series_navigation_feed(
         Ok(groups) => groups,
         Err(err) => return store_error(&err),
     };
-    atom_result(group_navigation_xml(&base.0, "Series", "series", &groups))
+    atom_result(group_navigation_xml(
+        &opds_tr(&state, &user),
+        &base.0,
+        "opds_series",
+        "series",
+        &groups,
+    ))
 }
 
 /// Render the OPDS 1.x acquisition feed for a named author.
@@ -244,7 +266,7 @@ pub(super) async fn author_publication_feed(
         name,
         query,
         store::GroupKind::Author,
-        "Author",
+        "opds_author",
         "authors",
     )
     .await
@@ -265,7 +287,7 @@ pub(super) async fn genre_publication_feed(
         name,
         query,
         store::GroupKind::Genre,
-        "Genre",
+        "opds_genre",
         "genres",
     )
     .await
@@ -286,7 +308,7 @@ pub(super) async fn series_publication_feed(
         name,
         query,
         store::GroupKind::Series,
-        "Series",
+        "opds_series_label",
         "series",
     )
     .await
@@ -301,10 +323,10 @@ async fn grouped_publication_feed(
     name: String,
     query: PageQuery,
     kind: store::GroupKind,
-    label: &str,
+    label_key: &str,
     segment: &str,
 ) -> Response {
-    let _user = match require_user(&state, &headers).await {
+    let user = match require_user(&state, &headers).await {
         Ok(user) => user,
         Err(response) => return response,
     };
@@ -337,7 +359,13 @@ async fn grouped_publication_feed(
     let endpoint = format!("/opds/{segment}/{}", percent_encode_path_segment(&name));
     atom_result(acquisition_xml(
         &base,
-        &format!("{label}: {name}"),
+        &{
+            let tr = opds_tr(&state, &user);
+            tr.args(
+                "opds_group_title",
+                &[("label", &tr.t(label_key)), ("name", &name)],
+            )
+        },
         &endpoint,
         None,
         total,
@@ -347,14 +375,14 @@ async fn grouped_publication_feed(
 }
 
 /// Build the root OPDS navigation feed.
-fn root_navigation_xml(base: &str, updated: &str) -> io::Result<Vec<u8>> {
+fn root_navigation_xml(tr: &Tr<'_>, base: &str, updated: &str) -> io::Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     let id = format!("{base}/opds/");
     feed_head(
         &mut writer,
         base,
         &id,
-        "kosync-rs library",
+        &tr.t("opds_library"),
         NAVIGATION_TYPE,
         updated,
         None,
@@ -368,7 +396,7 @@ fn root_navigation_xml(base: &str, updated: &str) -> io::Result<Vec<u8>> {
     )?;
     navigation_entry(
         &mut writer,
-        "All books",
+        &tr.t("opds_all_books"),
         &format!("{base}/opds/publications"),
         ACQUISITION_TYPE,
         updated,
@@ -376,7 +404,7 @@ fn root_navigation_xml(base: &str, updated: &str) -> io::Result<Vec<u8>> {
     )?;
     navigation_entry(
         &mut writer,
-        Shelf::Recent.title(),
+        &tr.t(Shelf::Recent.title_key()),
         &recent,
         ACQUISITION_TYPE,
         updated,
@@ -384,7 +412,7 @@ fn root_navigation_xml(base: &str, updated: &str) -> io::Result<Vec<u8>> {
     )?;
     navigation_entry(
         &mut writer,
-        Shelf::Reading.title(),
+        &tr.t(Shelf::Reading.title_key()),
         &format!("{base}/opds/{}", Shelf::Reading.segment()),
         ACQUISITION_TYPE,
         updated,
@@ -392,7 +420,7 @@ fn root_navigation_xml(base: &str, updated: &str) -> io::Result<Vec<u8>> {
     )?;
     navigation_entry(
         &mut writer,
-        "Authors",
+        &tr.t("opds_authors"),
         &format!("{base}/opds/authors"),
         NAVIGATION_TYPE,
         updated,
@@ -400,7 +428,7 @@ fn root_navigation_xml(base: &str, updated: &str) -> io::Result<Vec<u8>> {
     )?;
     navigation_entry(
         &mut writer,
-        "Genres",
+        &tr.t("opds_genres"),
         &format!("{base}/opds/genres"),
         NAVIGATION_TYPE,
         updated,
@@ -408,7 +436,7 @@ fn root_navigation_xml(base: &str, updated: &str) -> io::Result<Vec<u8>> {
     )?;
     navigation_entry(
         &mut writer,
-        "Series",
+        &tr.t("opds_series"),
         &format!("{base}/opds/series"),
         NAVIGATION_TYPE,
         updated,
@@ -420,8 +448,9 @@ fn root_navigation_xml(base: &str, updated: &str) -> io::Result<Vec<u8>> {
 
 /// Build one author, genre, or series navigation feed.
 fn group_navigation_xml(
+    tr: &Tr<'_>,
     base: &str,
-    title: &str,
+    title_key: &str,
     segment: &str,
     groups: &[store::GroupCount],
 ) -> io::Result<Vec<u8>> {
@@ -432,7 +461,7 @@ fn group_navigation_xml(
         &mut writer,
         base,
         &id,
-        &format!("kosync-rs library: {title}"),
+        &tr.args("opds_library_section", &[("title", &tr.t(title_key))]),
         NAVIGATION_TYPE,
         &updated,
         Some("/opds/"),

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(key="nav_search") }}{% endblock title %}
+
+{% block content %}
+<div class="search-page">
+  <div class="page-header">
+    <hgroup>
+      <h1>{{ t(key="nav_search") }}</h1>
+      <p>{{ t(key="search_lead_html") | safe }}</p>
+    </hgroup>
+  </div>
+
+  <form class="toolbar" method="get" action="/search"
+        hx-get="/search" hx-target="#search-results" hx-push-url="true"
+        hx-trigger="input changed delay:200ms, search">
+    <div class="search-field">
+      {{<icon name="search"/>}}
+      <label class="visually-hidden" for="search-query">{{ t(key="nav_search") }}</label>
+      <input id="search-query" type="search" name="q" value="{{ q }}" placeholder="{{ t(key="palette_placeholder") }}" autocomplete="off" autofocus>
+    </div>
+    <noscript><button type="submit">{{ t(key="nav_search") }}</button></noscript>
+  </form>
+
+  <div id="search-results" class="palette-results">
+    {% include "search_results.html" %}
+  </div>
+</div>
+{% endblock content %}

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="{{ locale }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="csrf-token" content="{{ csrf_token | default(value="") }}">
+  <meta name="description" content="{{ t(key="meta_description") }}">
+  <title>{% block title %}kosync-rs{% endblock title %} · kosync</title>
+  <script src="{{ static_url(name="theme.js") | safe }}"></script>
+  <link rel="preload" href="{{ static_url(name="fonts/fraunces-latin-normal.woff2") | safe }}" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="{{ static_url(name="fonts/inter-latin-normal.woff2") | safe }}" as="font" type="font/woff2" crossorigin>
+  <style>
+    @font-face { font-family: "Fraunces"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("{{ static_url(name="fonts/fraunces-latin-normal.woff2") | safe }}") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "Fraunces"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("{{ static_url(name="fonts/fraunces-latin-ext-normal.woff2") | safe }}") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "Fraunces"; font-style: italic; font-weight: 100 900; font-display: swap; src: url("{{ static_url(name="fonts/fraunces-latin-italic.woff2") | safe }}") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "Fraunces"; font-style: italic; font-weight: 100 900; font-display: swap; src: url("{{ static_url(name="fonts/fraunces-latin-ext-italic.woff2") | safe }}") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("{{ static_url(name="fonts/inter-latin-normal.woff2") | safe }}") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("{{ static_url(name="fonts/inter-latin-ext-normal.woff2") | safe }}") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+  </style>
+  <link rel="stylesheet" href="{{ static_url(name="app.css") | safe }}">
+  <script type="application/json" id="i18n">{{ js_strings | safe }}</script>
+  <script src="{{ static_url(name="htmx.min.js") | safe }}" defer></script>
+  <script src="{{ static_url(name="app.js") | safe }}" defer></script>
+  {% block head %}{% endblock head %}
+</head>
+<body class="{% if username %}has-tabbar{% endif %} {% block body_class %}{% endblock body_class %}">
+  <a class="skip-link" href="#content">{{ t(key="nav_skip") }}</a>
+
+  <header class="app-header">
+    <div class="container app-header-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">{{<icon name="book"/>}}</span>
+        <span class="brand-name">kosync</span>
+      </a>
+
+      {% if username %}
+      <nav class="primary-nav" aria-label="{{ t(key="nav_main_aria") }}">
+        <a class="nav-link" href="/" {% if active == "progress" %}aria-current="page"{% endif %}>{{<icon name="activity"/>}}<span>{{ t(key="nav_progress") }}</span></a>
+        <a class="nav-link" href="/books" {% if active == "books" %}aria-current="page"{% endif %}>{{<icon name="library"/>}}<span>{{ t(key="nav_library") }}</span></a>
+        {% if can_upload %}
+        <a class="nav-link" href="/books/upload" {% if active == "upload" %}aria-current="page"{% endif %}>{{<icon name="upload"/>}}<span>{{ t(key="nav_upload") }}</span></a>
+        {% endif %}
+        {% if is_admin %}
+        <a class="nav-link" href="/admin/users" {% if active == "users" %}aria-current="page"{% endif %}>{{<icon name="users"/>}}<span>{{ t(key="nav_users") }}</span></a>
+        {% endif %}
+      </nav>
+      {% endif %}
+
+      <div class="header-actions">
+        {% if username %}
+        <a class="search-trigger" href="/search" data-palette-open aria-keyshortcuts="Control+K Meta+K">
+          {{<icon name="search"/>}}
+          <span class="search-trigger-label">{{ t(key="nav_search") }}</span>
+          <kbd class="search-trigger-kbd">Ctrl K</kbd>
+        </a>
+        {% endif %}
+
+        {% if not username %}
+        {% for language in languages %}
+        <a class="lang-switch" href="/locale/{{ language.code }}" hreflang="{{ language.code }}" lang="{{ language.code }}"
+           title="{{ t(key="nav_language_aria") }}">{{ language.name }}</a>
+        {% endfor %}
+        <button type="button" class="icon-button theme-toggle" data-theme-toggle
+                aria-label="{{ t(key="nav_theme_aria") }}" title="{{ t(key="nav_theme_aria") }}">
+          <span class="theme-icon theme-icon-auto">{{<icon name="monitor"/>}}</span>
+          <span class="theme-icon theme-icon-light">{{<icon name="sun"/>}}</span>
+          <span class="theme-icon theme-icon-dark">{{<icon name="moon"/>}}</span>
+        </button>
+        {% else %}
+        <details class="menu user-menu">
+          <summary class="avatar" aria-label="{{ t(key="nav_account_aria", name=username) }}">{{ username | truncate(length=1, end="") | upper }}</summary>
+          <div class="menu-panel">
+            <p class="menu-heading">{{ t(key="nav_signed_in_as_html", name=username) | safe }}</p>
+            <a class="menu-item" href="/settings" {% if active == "settings" %}aria-current="page"{% endif %}>{{<icon name="settings"/>}}{{ t(key="nav_settings") }}</a>
+            <a class="menu-item" href="/help">{{<icon name="help"/>}}{{ t(key="nav_help") }}</a>
+            <button type="button" class="menu-item theme-toggle" data-theme-toggle>
+              <span class="theme-icon theme-icon-auto">{{<icon name="monitor"/>}}</span>
+              <span class="theme-icon theme-icon-light">{{<icon name="sun"/>}}</span>
+              <span class="theme-icon theme-icon-dark">{{<icon name="moon"/>}}</span>
+              {{ t(key="nav_theme_aria") }}
+            </button>
+            {% for language in languages %}
+            <a class="menu-item" href="/locale/{{ language.code }}" hreflang="{{ language.code }}" lang="{{ language.code }}"
+               title="{{ t(key="nav_language_aria") }}"><span class="lang-code" aria-hidden="true">{{ language.code }}</span>{{ language.name }}</a>
+            {% endfor %}
+            <hr>
+            <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="menu-item">{{<icon name="logout"/>}}{{ t(key="nav_logout") }}</button>
+            </form>
+          </div>
+        </details>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  <main id="content" class="container app-main" tabindex="-1">
+    {% block content %}{% endblock content %}
+  </main>
+
+  <footer class="container app-footer">
+    <span>{{ t(key="footer_tagline") }}</span>
+    <nav aria-label="{{ t(key="footer_aria") }}">
+      <a href="/help">{{ t(key="nav_help") }}</a>
+      <span>OPDS <code>/opds/</code></span>
+    </nav>
+  </footer>
+
+  {% if username %}
+  <nav class="tabbar" aria-label="{{ t(key="nav_mobile_aria") }}">
+    <a class="tab" href="/" {% if active == "progress" %}aria-current="page"{% endif %}>{{<icon name="activity"/>}}<span>{{ t(key="nav_progress") }}</span></a>
+    <a class="tab" href="/books" {% if active == "books" %}aria-current="page"{% endif %}>{{<icon name="library"/>}}<span>{{ t(key="nav_library") }}</span></a>
+    <a class="tab" href="/search" data-palette-open>{{<icon name="search"/>}}<span>{{ t(key="nav_search") }}</span></a>
+    {% if can_upload %}
+    <a class="tab" href="/books/upload" {% if active == "upload" %}aria-current="page"{% endif %}>{{<icon name="upload"/>}}<span>{{ t(key="nav_upload") }}</span></a>
+    {% endif %}
+    {% if is_admin %}
+    <a class="tab" href="/admin/users" {% if active == "users" %}aria-current="page"{% endif %}>{{<icon name="users"/>}}<span>{{ t(key="nav_users") }}</span></a>
+    {% endif %}
+  </nav>
+
+  <dialog id="palette" class="palette" aria-label="{{ t(key="nav_search") }}">
+    <form class="palette-form" method="get" action="/search">
+      {{<icon name="search"/>}}
+      <label class="visually-hidden" for="palette-input">{{ t(key="palette_label") }}</label>
+      <input id="palette-input" type="search" name="q" autocomplete="off" spellcheck="false"
+             placeholder="{{ t(key="palette_placeholder") }}"
+             role="combobox" aria-expanded="true" aria-controls="palette-results" aria-autocomplete="list"
+             hx-get="/search" hx-trigger="input changed delay:150ms, search, paletteopen"
+             hx-target="#palette-results" hx-sync="this:replace">
+      <kbd>Esc</kbd>
+    </form>
+    <div id="palette-results" class="palette-results" role="listbox" aria-label="{{ t(key="palette_results_aria") }}"></div>
+    <footer class="palette-footer">
+      <span><kbd>↑</kbd><kbd>↓</kbd> {{ t(key="palette_navigate") }}</span>
+      <span><kbd>↵</kbd> {{ t(key="palette_open") }}</span>
+      <span><kbd>Esc</kbd> {{ t(key="palette_close") }}</span>
+    </footer>
+  </dialog>
+  {% endif %}
+
+  <dialog id="confirm-dialog" class="confirm-dialog">
+    <article>
+      <h3 id="confirm-title">{{ t(key="js_confirm_title") }}</h3>
+      <p id="confirm-message"></p>
+      <footer>
+        <button type="button" class="secondary" data-dialog-close>{{ t(key="common_cancel") }}</button>
+        <button type="button" class="danger" id="confirm-accept">{{ t(key="js_confirm_label") }}</button>
+      </footer>
+    </article>
+  </dialog>
+
+  <div id="app-toast" class="toast toast-error" role="alert" hidden></div>
+</body>
+</html>

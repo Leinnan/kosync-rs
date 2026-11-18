@@ -1,0 +1,392 @@
+key,en,pl
+language_name,English,Polski
+number_decimal,.,","
+meta_description,Self-hosted KOReader sync server with a shared EPUB library.,Samodzielnie hostowany serwer synchronizacji KOReadera ze wspólną biblioteką EPUB.
+nav_skip,Skip to content,Przejdź do treści
+nav_main_aria,Main,Główna
+nav_mobile_aria,Main (mobile),Główna (mobilna)
+nav_progress,Progress,Postępy
+nav_library,Library,Biblioteka
+nav_upload,Upload,Prześlij
+nav_users,Users,Użytkownicy
+nav_search,Search,Szukaj
+nav_language_aria,Change language,Zmień język
+nav_theme_aria,Colour theme,Motyw kolorystyczny
+nav_account_aria,Account menu for {name},Menu konta {name}
+nav_signed_in_as_html,Signed in as <strong>{name}</strong>,Zalogowano jako <strong>{name}</strong>
+nav_settings,Settings,Ustawienia
+nav_help,Connect an e-reader,Połącz czytnik
+nav_logout,Log out,Wyloguj się
+footer_tagline,kosync-rs · self-hosted KOReader sync,kosync-rs · samodzielnie hostowana synchronizacja KOReadera
+footer_aria,Footer,Stopka
+palette_label,"Search books, documents, and pages","Szukaj książek, dokumentów i stron"
+palette_placeholder,"Search books, documents, and pages…","Szukaj książek, dokumentów i stron…"
+palette_results_aria,Results,Wyniki
+palette_navigate,to navigate,aby przejść
+palette_open,to open,aby otworzyć
+palette_close,to close,aby zamknąć
+common_cancel,Cancel,Anuluj
+login_title,Sign in,Zaloguj się
+login_lead,Use your KOReader sync credentials.,Użyj danych logowania do synchronizacji KOReadera.
+login_username,Username,Nazwa użytkownika
+login_password,Password,Hasło
+login_submit,Sign in,Zaloguj się
+login_hint_html,"New to this server? Register from KOReader's <em>Progress sync</em> plugin using this server's address, then sign in here with the same credentials.","Pierwszy raz na tym serwerze? Zarejestruj się we wtyczce <em>Progress sync</em> KOReadera, podając adres tego serwera, a potem zaloguj się tutaj tymi samymi danymi."
+login_help_link,How to connect an e-reader,Jak połączyć czytnik
+login_error_invalid,Invalid username or password,Nieprawidłowa nazwa użytkownika lub hasło
+login_error_locked,Too many failed sign-ins. Try again in 15 minutes.,Zbyt wiele nieudanych prób logowania. Spróbuj ponownie za 15 minut.
+error_generic,Something went wrong. Please try again.,Coś poszło nie tak. Spróbuj ponownie.
+js_theme_auto,Theme: match system,Motyw: jak w systemie
+js_theme_light,Theme: light,Motyw: jasny
+js_theme_dark,Theme: dark,Motyw: ciemny
+js_error_status,Something went wrong (error {status}). Please try again.,Coś poszło nie tak (błąd {status}). Spróbuj ponownie.
+js_error_generic,Something went wrong. Please try again.,Coś poszło nie tak. Spróbuj ponownie.
+js_error_network,Network error. Please check your connection and try again.,Błąd sieci. Sprawdź połączenie i spróbuj ponownie.
+js_confirm_title,Are you sure?,Czy na pewno?
+js_confirm_label,Confirm,Potwierdź
+js_copied,Copied,Skopiowano
+js_password_show,Show password,Pokaż hasło
+js_password_hide,Hide password,Ukryj hasło
+js_remove_file,Remove {name},Usuń {name}
+js_upload,Upload,Prześlij
+js_upload_files_one,Upload {n} file,Prześlij {n} plik
+js_upload_files_few,Upload {n} files,Prześlij {n} pliki
+js_upload_files_many,Upload {n} files,Prześlij {n} plików
+js_upload_files_other,Upload {n} files,Prześlij {n} pliku
+js_decimal,.,","
+progress_title,Reading progress,Postępy czytania
+progress_welcome,"Welcome back, {name}","Witaj ponownie, {name}"
+progress_lead,"Everything you've synced from KOReader, across all your devices.","Wszystko, co zsynchronizowano z KOReadera, ze wszystkich Twoich urządzeń."
+progress_stats_aria,Reading statistics,Statystyki czytania
+progress_reading_now,Reading now,Czytane teraz
+progress_reading_now_hint,books in progress,książki w trakcie
+progress_finished_hint,books completed,ukończone książki
+progress_devices,Devices,Urządzenia
+progress_devices_hint,active in the last 30 days,aktywne w ostatnich 30 dniach
+progress_sync_activity,Sync activity,Aktywność synchronizacji
+progress_syncs_hint,this week · {count} in 30 days,w tym tygodniu · {count} w 30 dni
+progress_heatmap_aria,Syncs per day over the last 20 weeks,Synchronizacje dziennie w ostatnich 20 tygodniach
+progress_also_reading,Also reading,Czytasz też
+progress_last_read,Last read on {device},Ostatnio czytane na: {device}
+progress_recently_added,Recently added,Ostatnio dodane
+progress_continue,Continue reading,Czytaj dalej
+progress_all_documents,All synced documents,Wszystkie zsynchronizowane dokumenty
+progress_search_label,Search documents,Szukaj dokumentów
+progress_search_placeholder,"Search title, author, or file name","Szukaj tytułu, autora lub nazwy pliku"
+progress_view_history,View history,Pokaż historię
+progress_not_in_library,Not in the library,Brak w bibliotece
+progress_no_matches,No synced documents match your filters.,Żaden zsynchronizowany dokument nie pasuje do filtrów.
+progress_empty_title,Nothing synced yet,Nic jeszcze nie zsynchronizowano
+progress_empty_html,Open a book in KOReader and use <em>Progress sync</em> with this server. Your reading positions will show up here.,Otwórz książkę w KOReaderze i użyj <em>Progress sync</em> z tym serwerem. Twoje pozycje czytania pojawią się tutaj.
+progress_heat_cell,{date}: {syncs},{date}: {syncs}
+count_syncs_one,{n} sync,{n} synchronizacja
+count_syncs_few,{n} syncs,{n} synchronizacje
+count_syncs_many,{n} syncs,{n} synchronizacji
+count_syncs_other,{n} syncs,{n} synchronizacji
+count_documents_one,{n} document,{n} dokument
+count_documents_few,{n} documents,{n} dokumenty
+count_documents_many,{n} documents,{n} dokumentów
+count_documents_other,{n} documents,{n} dokumentu
+count_books_one,{n} book,{n} książka
+count_books_few,{n} books,{n} książki
+count_books_many,{n} books,{n} książek
+count_books_other,{n} books,{n} książki
+common_see_all,See all,Pokaż wszystko
+common_results,Results,Wyniki
+common_apply,Apply,Zastosuj
+common_no_matches,No matches,Brak wyników
+filter_status,Status,Stan
+filter_sort,Sort,Sortowanie
+filter_remove_aria,Remove filter {name},Usuń filtr {name}
+filter_clear_all,Clear all,Wyczyść wszystko
+filter_clear,Clear filters,Wyczyść filtry
+status_all,All statuses,Wszystkie stany
+status_any,Any,Dowolny
+status_unread,Unread,Nieprzeczytane
+status_in_progress,In progress,W trakcie
+status_finished,Finished,Ukończone
+sort_recent_sync,Recently synced,Ostatnio synchronizowane
+sort_title,Title A–Z,Tytuł A–Z
+pagination_aria,Pagination,Stronicowanie
+pagination_previous,Previous,Poprzednia
+pagination_next,Next,Następna
+pagination_status,Page {page} of {total},Strona {page} z {total}
+books_lead,"The shared book collection. Everyone sees the same books, and reading progress is kept per account.","Wspólna kolekcja książek. Wszyscy widzą te same książki, a postęp czytania jest zapisywany osobno dla każdego konta."
+books_add,Add books,Dodaj książki
+books_search,Search title or author,Szukaj tytułu lub autora
+sort_recent_added,Recently added,Ostatnio dodane
+books_author,Author,Autor
+books_series,Series,Seria
+books_genre,Genre,Gatunek
+books_language,Language,Język
+books_filters,Filters,Filtry
+books_reading_status,Reading status,Stan czytania
+books_all_genres,All genres,Wszystkie gatunki
+books_all_authors,All authors,Wszyscy autorzy
+books_all_series,All series,Wszystkie serie
+books_all_languages,All languages,Wszystkie języki
+books_view,View,Widok
+books_view_grid,Grid view,Widok siatki
+books_view_list,List view,Widok listy
+books_no_matches,No books match your filters.,Żadna książka nie pasuje do filtrów.
+books_empty_title,The library is empty,Biblioteka jest pusta
+books_empty_lead,Upload EPUB files to start the shared collection.,"Prześlij pliki EPUB, aby założyć wspólną kolekcję."
+books_empty_ask,Ask an administrator for upload access.,Poproś administratora o uprawnienia do przesyłania.
+books_upload,Upload books,Prześlij książki
+common_dismiss,Dismiss,Zamknij
+chip_search,Search: {value},Szukaj: {value}
+chip_author,Author: {value},Autor: {value}
+chip_genre,Genre: {value},Gatunek: {value}
+chip_series,Series: {value},Seria: {value}
+chip_language,Language: {value},Język: {value}
+chip_status,Status: {value},Stan: {value}
+book_breadcrumb_aria,Breadcrumb,Ścieżka nawigacji
+book_cover_alt,Cover of {title},Okładka: {title}
+book_by,by {authors},{authors}
+book_series_position,Book {index} of,Tom {index} serii
+book_download,Download EPUB,Pobierz EPUB
+book_view_history,View sync history,Pokaż historię synchronizacji
+book_more_actions,More actions,Więcej działań
+book_delete_menu,Delete book…,Usuń książkę…
+book_description,Description,Opis
+book_more_in,More in {series},Więcej z serii {series}
+book_view_series,View series,Pokaż serię
+book_percent_read,{percent} read,Przeczytano {percent}
+book_your_progress,Your reading progress,Twój postęp czytania
+book_synced_html,"Synced <time datetime=""{datetime}"">{when}</time>","Synchronizacja: <time datetime=""{datetime}"">{when}</time>"
+book_synced_from_html,"Synced <time datetime=""{datetime}"">{when}</time> from {device}","Synchronizacja: <time datetime=""{datetime}"">{when}</time> z {device}"
+book_not_started,Not started,Nie rozpoczęto
+book_not_started_lead,Download this book to an e-reader and sync with KOReader to track progress here.,"Pobierz tę książkę na czytnik i synchronizuj z KOReaderem, aby śledzić tu postęp."
+book_details,Details,Szczegóły
+book_overview,Overview,Przegląd
+book_sections_aria,Book sections,Sekcje książki
+book_publisher,Publisher,Wydawca
+book_published,Published,Wydano
+book_file_size,File size,Rozmiar pliku
+book_added,Added,Dodano
+book_updated,Updated,Zaktualizowano
+book_technical,Technical information,Informacje techniczne
+book_position,Position: {value},Pozycja: {value}
+book_identifier,Identifier: {value},Identyfikator: {value}
+book_hash,Hash: {value},Skrót: {value}
+book_delete_title,Delete this book?,Usunąć tę książkę?
+book_delete_html,<strong>{title}</strong> and its cover will be removed from the shared library for everyone. Reading progress stays in each account. This cannot be undone.,Książka <strong>{title}</strong> wraz z okładką zostanie usunięta ze wspólnej biblioteki dla wszystkich. Postęp czytania pozostanie na każdym koncie. Tej operacji nie można cofnąć.
+book_delete,Delete book,Usuń książkę
+book_cover_menu,Replace cover…,Zmień okładkę…
+book_cover_title,Replace the cover,Zmień okładkę
+book_cover_lead_html,"Pick a picture to use as the cover of <strong>{title}</strong> for everyone. Only the cover inside the EPUB changes, so reading progress carries over: download the book again to get the new cover.","Wybierz obraz, który będzie okładką książki <strong>{title}</strong> dla wszystkich. Zmienia się tylko okładka w pliku EPUB, więc postęp czytania zostaje zachowany. Pobierz książkę ponownie, aby mieć nową okładkę."
+book_cover_file_label,Cover picture,Obraz okładki
+book_cover_submit,Replace cover,Zmień okładkę
+doc_title_hash,Document {hash},Dokument {hash}
+doc_history,History,Historia
+doc_sync_history,Sync history,Historia synchronizacji
+doc_summary_aria,Summary,Podsumowanie
+doc_current_device,Current device,Bieżące urządzenie
+doc_synced_html,"synced <time datetime=""{datetime}"">{when}</time>","synchronizacja <time datetime=""{datetime}"">{when}</time>"
+doc_first_recorded,First recorded,Pierwszy zapis
+doc_last_recorded,Last recorded,Ostatni zapis
+doc_chart_title,Progress over time,Postęp w czasie
+doc_chart_sparse,Sync a few more times to see your progress drawn here.,"Zsynchronizuj jeszcze kilka razy, a pojawi się tu wykres postępu."
+doc_chart_aria,"Reading progress for each sync, from {start} to {end}","Postęp czytania przy każdej synchronizacji, od {start} do {end}"
+doc_recent_syncs,Recent syncs,Ostatnie synchronizacje
+doc_by_device,Progress by device,Postęp według urządzenia
+doc_share_aria,Share of reading progress by device,Udział urządzeń w postępie czytania
+doc_device,Device,Urządzenie
+doc_first_seen,First seen,Pierwszy raz
+doc_last_seen,Last seen,Ostatnio
+doc_syncs,Syncs,Synchronizacje
+doc_contributed,Contributed,Udział
+doc_point_label,{device} · {percent} · {date},{device} · {percent} · {date}
+doc_link_title,Same book as…,Ta sama książka co…
+doc_link_lead,"This sync isn't matched to a book in the library. If it is one, pick it: progress from every device then shows up together.","Ta synchronizacja nie jest powiązana z żadną książką z biblioteki. Jeśli to któraś z nich, wybierz ją, a postęp ze wszystkich urządzeń będzie widoczny razem."
+doc_link_label,Library book,Książka z biblioteki
+doc_link_submit,Link to this book,Powiąż z tą książką
+doc_link_done,Linked. Progress from this reader now counts towards the book.,Powiązano. Postęp z tego czytnika liczy się teraz do tej książki.
+doc_link_exists,This sync is already matched to a library book.,Ta synchronizacja jest już powiązana z książką z biblioteki.
+doc_link_missing,That sync or book no longer exists.,Ta synchronizacja lub książka już nie istnieje.
+count_sync_events_one,{n} sync event,{n} synchronizacja
+count_sync_events_few,{n} sync events,{n} synchronizacje
+count_sync_events_many,{n} sync events,{n} synchronizacji
+count_sync_events_other,{n} sync events,{n} synchronizacji
+help_lead,Sync reading positions with KOReader and browse the library from any OPDS-capable reading app.,Synchronizuj pozycje czytania z KOReaderem i przeglądaj bibliotekę w dowolnej aplikacji obsługującej OPDS.
+help_sync_title,KOReader progress sync,Synchronizacja postępów KOReadera
+help_step_open,Open the sync settings,Otwórz ustawienia synchronizacji
+help_step_open_html,"In KOReader, open a book, then go to <em>Tools → Progress sync → Custom sync server</em>.",W KOReaderze otwórz książkę i przejdź do <em>Narzędzia → Synchronizacja postępu → Własny serwer synchronizacji</em>.
+help_step_address,Enter this server's address,Wpisz adres tego serwera
+help_copy,Copy,Kopiuj
+help_step_register,Register or log in,Zarejestruj się lub zaloguj
+help_step_register_html,Choose <em>Register / Login</em> and use the same username and password you use on this site.,"Wybierz <em>Zarejestruj / Zaloguj</em> i podaj tę samą nazwę użytkownika i hasło, których używasz na tej stronie."
+help_step_sync,Sync,Synchronizuj
+help_step_sync_html,"Turn on automatic sync, or choose <em>Push progress</em>. The book will show up under Reading progress.",Włącz automatyczną synchronizację albo wybierz <em>Wyślij postęp</em>. Książka pojawi się w Postępach czytania.
+help_opds_title,OPDS catalog,Katalog OPDS
+help_opds_lead,Add a catalog in your reading app to browse and download books from the shared library.,"Dodaj katalog w aplikacji do czytania, aby przeglądać i pobierać książki ze wspólnej biblioteki."
+help_opds1,OPDS 1.x (KOReader and most e-readers),OPDS 1.x (KOReader i większość czytników)
+help_opds2,OPDS 2.0 (Readium-based and newer apps),OPDS 2.0 (aplikacje oparte na Readium i nowsze)
+help_opds_auth,OPDS uses HTTP Basic auth. Sign in with the same username and password you use for syncing.,"OPDS używa uwierzytelniania HTTP Basic. Zaloguj się tą samą nazwą użytkownika i hasłem, których używasz do synchronizacji."
+help_notes_title,Good to know,Warto wiedzieć
+help_note_root_html,"The server root (<code>/</code>) serves this web interface, not OPDS. Point e-readers at <code>/opds/</code>.","Główny adres serwera (<code>/</code>) to ten interfejs WWW, a nie OPDS. W czytnikach podaj <code>/opds/</code>."
+help_note_digest,"Books are matched to your reading progress by KOReader's partial MD5 document digest, so a book downloaded from the library picks up where you left off.","Książki są dopasowywane do postępu czytania na podstawie częściowego skrótu MD5 dokumentu, którego używa KOReader, więc książka pobrana z biblioteki otworzy się tam, gdzie skończono."
+help_note_tls,HTTP Basic auth sends credentials in cleartext. Put this server behind a TLS reverse proxy before exposing it to the internet.,"Uwierzytelnianie HTTP Basic przesyła dane logowania jawnym tekstem. Zanim udostępnisz serwer w internecie, umieść go za odwrotnym proxy z TLS."
+upload_lead,Add EPUB or MOBI files to the shared library. MOBI files are converted to EPUB. Covers and metadata are extracted automatically.,Dodaj pliki EPUB lub MOBI do wspólnej biblioteki. Pliki MOBI są konwertowane do EPUB. Okładki i metadane są odczytywane automatycznie.
+upload_drop,Drop files here or click to browse,"Upuść pliki tutaj lub kliknij, aby wybrać"
+upload_drop_hint,"EPUB or MOBI, several at once","EPUB lub MOBI, kilka naraz"
+upload_files_label,EPUB or MOBI files,Pliki EPUB lub MOBI
+upload_uploading,Uploading…,Przesyłanie…
+upload_imported,Added to the library,Dodano do biblioteki
+upload_duplicate,Already in the library,Już jest w bibliotece
+upload_failed,Could not be imported,Nie udało się zaimportować
+upload_badge_imported,imported,zaimportowano
+upload_badge_duplicate,duplicate,duplikat
+upload_badge_error,error,błąd
+upload_open,Open,Otwórz
+search_lead_html,"Find books in the library, synced documents, and pages. Tip: press <kbd>Ctrl</kbd> <kbd>K</kbd> anywhere.","Znajdź książki w bibliotece, zsynchronizowane dokumenty i strony. Wskazówka: naciśnij <kbd>Ctrl</kbd> <kbd>K</kbd> w dowolnym miejscu."
+search_documents,Synced documents,Zsynchronizowane dokumenty
+search_go_to,Go to,Przejdź do
+search_no_results,No results for “{query}”.,Brak wyników dla „{query}”.
+search_action_progress,Reading progress,Postępy czytania
+search_action_library,Library,Biblioteka
+search_action_upload,Upload books,Prześlij książki
+search_action_users,Manage users,Zarządzaj użytkownikami
+search_action_settings,Settings,Ustawienia
+search_action_help,Connect an e-reader,Połącz czytnik
+settings_lead,Manage your account and how kosync looks on this device.,Zarządzaj kontem i wyglądem kosync na tym urządzeniu.
+settings_sections_aria,Settings sections,Sekcje ustawień
+settings_account,Account,Konto
+settings_language,Language,Język
+settings_appearance,Appearance,Wygląd
+settings_administration,Administration,Administracja
+settings_change_password,Change your password,Zmień hasło
+settings_current_password,Current password,Obecne hasło
+settings_new_password,New password,Nowe hasło
+settings_password_hint,This also changes the password KOReader uses to sync. Update it on your devices afterwards.,"To zmienia także hasło, którego KOReader używa do synchronizacji. Zaktualizuj je potem na swoich urządzeniach."
+settings_change_password_submit,Change password,Zmień hasło
+settings_language_label,Language of the web interface and OPDS catalog,Język interfejsu WWW i katalogu OPDS
+settings_language_auto,Automatic (browser language),Automatycznie (język przeglądarki)
+settings_language_hint,"Saved to your account, so e-readers browsing the OPDS catalog use it too.","Zapisywany na koncie, więc czytniki przeglądające katalog OPDS też go używają."
+settings_save,Save,Zapisz
+settings_theme_system,System,Systemowy
+settings_theme_light,Light,Jasny
+settings_theme_dark,Dark,Ciemny
+settings_theme_hint,Saved in this browser only.,Zapisywane tylko w tej przeglądarce.
+settings_reset_other,Reset another user's password,Zresetuj hasło innego użytkownika
+settings_user,User,Użytkownik
+settings_reset_submit,Reset password,Zresetuj hasło
+settings_more_controls_html,"More account controls are on the <a href=""/admin/users"">Users</a> page.","Więcej ustawień kont jest na stronie <a href=""/admin/users"">Użytkownicy</a>."
+settings_no_accounts_html,"There are no other accounts to manage. <a href=""/admin/users"">Create one</a>.","Nie ma innych kont do zarządzania. <a href=""/admin/users"">Utwórz konto</a>."
+flash_settings_wrong-current,Your current password is incorrect.,Obecne hasło jest nieprawidłowe.
+flash_settings_invalid,Enter a non-empty password.,Podaj niepuste hasło.
+flash_protected,The built-in admin account cannot be modified.,Wbudowanego konta admin nie można modyfikować.
+flash_missing,That user no longer exists.,Ten użytkownik już nie istnieje.
+flash_password-changed,Password changed.,Hasło zostało zmienione.
+flash_password-reset,Password reset.,Hasło zostało zresetowane.
+flash_language-saved,Language saved.,Zapisano język.
+users_lead,Create accounts and control who can upload books. Each account has its own reading progress. The book library is shared by everyone.,"Twórz konta i decyduj, kto może przesyłać książki. Każde konto ma własny postęp czytania. Biblioteka książek jest wspólna dla wszystkich."
+users_new,New user,Nowy użytkownik
+users_list_aria,Accounts,Konta
+users_admin_badge,admin,admin
+users_last_sync_html,"last sync <time datetime=""{datetime}"">{when}</time>","ostatnia synchronizacja <time datetime=""{datetime}"">{when}</time>"
+users_never_synced,never synced,bez synchronizacji
+users_active,Active,Aktywne
+users_inactive,Inactive,Nieaktywne
+users_upload_allowed,Upload allowed,Przesyłanie dozwolone
+users_upload_blocked,Upload blocked,Przesyłanie zablokowane
+users_protected_title,The built-in admin account is protected,Wbudowane konto admin jest chronione
+users_protected,Protected,Chronione
+users_actions_aria,Actions for {name},Działania dla {name}
+users_deactivate,Deactivate,Dezaktywuj
+users_activate,Activate,Aktywuj
+users_revoke_upload,Revoke upload,Odbierz przesyłanie
+users_allow_upload,Allow upload,Zezwól na przesyłanie
+users_new_password_for,New password for {name},Nowe hasło dla {name}
+users_reset,Reset,Resetuj
+users_delete_confirm,{name} and all of their reading progress will be permanently removed.,Konto {name} i cały jego postęp czytania zostaną trwale usunięte.
+users_delete_title,Delete {name}?,Usunąć {name}?
+users_delete,Delete user,Usuń użytkownika
+users_delete_menu,Delete user…,Usuń użytkownika…
+users_create_title,Create account,Utwórz konto
+users_allow_upload_label,Allow this user to upload books,Zezwól temu użytkownikowi na przesyłanie książek
+users_create,Create user,Utwórz użytkownika
+flash_admin_invalid,Enter a username and a non-empty password.,Podaj nazwę użytkownika i niepuste hasło.
+flash_exists,A user with that name already exists.,Użytkownik o tej nazwie już istnieje.
+flash_created,User created.,Utworzono użytkownika.
+flash_activated,User activated.,Aktywowano użytkownika.
+flash_deactivated,User deactivated.,Dezaktywowano użytkownika.
+flash_upload-granted,Upload permission granted.,Nadano uprawnienie do przesyłania.
+flash_upload-revoked,Upload permission revoked.,Odebrano uprawnienie do przesyłania.
+flash_deleted,User deleted.,Usunięto użytkownika.
+import_drm,DRM-protected books cannot be converted,Książek z zabezpieczeniem DRM nie można przekonwertować
+import_invalid_mobi,Not a valid MOBI file,To nie jest prawidłowy plik MOBI
+import_mobi_failed,Could not convert this MOBI file,Nie udało się przekonwertować tego pliku MOBI
+import_invalid_epub,Not a valid EPUB file,To nie jest prawidłowy plik EPUB
+import_rejected_too_many_entries,Rejected: archive has too many entries,Odrzucono: archiwum ma zbyt wiele plików
+import_rejected_unsafe_path,Rejected: archive contains an unsafe path,Odrzucono: archiwum zawiera niebezpieczną ścieżkę
+import_rejected_entry_too_large,Rejected: archive entry is too large,Odrzucono: plik w archiwum jest zbyt duży
+import_rejected_expanded_too_large,Rejected: archive expands to too much data,Odrzucono: archiwum po rozpakowaniu jest zbyt duże
+import_storage,Storage error,Błąd zapisu
+import_save_failed,Failed to save publication,Nie udało się zapisać publikacji
+import_read_failed,Failed to read file,Nie udało się odczytać pliku
+cover_replaced,Cover replaced. Download the book again to get it; reading progress is kept.,Okładka została zmieniona. Pobierz książkę ponownie; postęp czytania zostaje zachowany.
+cover_missing_file,Choose a picture to upload.,Wybierz obraz do przesłania.
+cover_none,This book has no cover picture inside its EPUB to replace.,Ta książka nie ma w pliku EPUB okładki do zastąpienia.
+cover_invalid_image,That file is not a picture that can be used as a cover.,Tego pliku nie można użyć jako okładki.
+cover_rewrite_failed,The book could not be updated with the new cover.,Nie udało się zaktualizować książki o nową okładkę.
+cover_save_failed,Failed to save the new cover.,Nie udało się zapisać nowej okładki.
+opds_library,kosync-rs library,Biblioteka kosync-rs
+opds_library_section,kosync-rs library: {title},Biblioteka kosync-rs: {title}
+opds_all_books,All books,Wszystkie książki
+opds_recent,Recently added,Ostatnio dodane
+opds_reading,Currently reading,Czytane obecnie
+opds_authors,Authors,Autorzy
+opds_genres,Genres,Gatunki
+opds_series,Series,Serie
+opds_author,Author,Autor
+opds_genre,Genre,Gatunek
+opds_series_label,Series,Seria
+opds_group_title,{label}: {name},{label}: {name}
+opds_search_description,Search the kosync-rs library,Przeszukaj bibliotekę kosync-rs
+date_short,"{month} {day}, {year}",{day} {month} {year}
+month_short_1,Jan,sty
+month_short_2,Feb,lut
+month_short_3,Mar,mar
+month_short_4,Apr,kwi
+month_short_5,May,maj
+month_short_6,Jun,cze
+month_short_7,Jul,lip
+month_short_8,Aug,sie
+month_short_9,Sep,wrz
+month_short_10,Oct,paź
+month_short_11,Nov,lis
+month_short_12,Dec,gru
+percent,{value}%,{value}%
+time_just_now,just now,przed chwilą
+time_soon,in a few seconds,za kilka sekund
+time_ago,{amount} ago,{amount} temu
+time_in,in {amount},za {amount}
+time_minutes_one,{n} minute,{n} minutę
+time_minutes_few,{n} minutes,{n} minuty
+time_minutes_many,{n} minutes,{n} minut
+time_minutes_other,{n} minutes,{n} minuty
+time_hours_one,{n} hour,{n} godzinę
+time_hours_few,{n} hours,{n} godziny
+time_hours_many,{n} hours,{n} godzin
+time_hours_other,{n} hours,{n} godziny
+time_days_one,{n} day,{n} dzień
+time_days_few,{n} days,{n} dni
+time_days_many,{n} days,{n} dni
+time_days_other,{n} days,{n} dnia
+error_status,Error {code},Błąd {code}
+error_detail,Details,Szczegóły
+error_home,Home,Strona główna
+error_back,Go back,Wróć
+error_title_400,This request didn't work,Nie udało się wykonać żądania
+error_lead_400,"Something in the request was missing or malformed. Go back, check the form and try again.","W żądaniu czegoś brakowało albo było niepoprawne. Wróć, sprawdź formularz i spróbuj ponownie."
+error_title_403,Access denied,Brak dostępu
+error_lead_403,"The form may have expired, or your browser blocked cookies. Reload the page and try again.","Formularz mógł wygasnąć albo przeglądarka zablokowała ciasteczka. Odśwież stronę i spróbuj ponownie."
+error_title_404,Page not found,Nie znaleziono strony
+error_lead_404,The page you're looking for doesn't exist or has moved.,Szukana strona nie istnieje albo została przeniesiona.
+error_title_413,File too large,Plik jest za duży
+error_lead_413,The upload exceeds the size this server accepts. Try a smaller file.,Przesyłany plik przekracza rozmiar akceptowany przez serwer. Spróbuj mniejszego pliku.
+error_title_429,Too many requests,Zbyt wiele żądań
+error_lead_429,Please wait a moment before trying again.,Odczekaj chwilę i spróbuj ponownie.
+error_title_other,Something went wrong,Coś poszło nie tak
+error_lead_other,The server couldn't complete this request. Please try again in a moment.,Serwer nie mógł wykonać tego żądania. Spróbuj ponownie za chwilę.

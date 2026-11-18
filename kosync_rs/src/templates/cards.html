@@ -1,0 +1,52 @@
+
+{#- A library book card: cover, reading-state badge, title, author, series. -#}
+{% component book_card(book, current: bool = false, @locale) -%}
+<article class="book-card{% if current %} is-current{% endif %}">
+  <a href="/books/{{ book.document_hash }}" class="cover-link" tabindex="-1" aria-hidden="true">
+    <figure class="cover-container">
+      {% if book.has_thumb %}
+        <img src="/books/{{ book.document_hash }}/thumbnail" alt="" loading="lazy">
+      {% else %}
+        <div class="cloth-cover" style="--tint: {{ book.tint }}"><span>{{ book.title }}</span>{% if book.authors %}<small>{{ book.authors }}</small>{% endif %}</div>
+      {% endif %}
+      {% if book.has_progress %}
+        {% if book.percentage >= 0.99 %}
+          <span class="cover-badge finished">{{<icon name="check"/>}}{{ t(key="status_finished") }}</span>
+        {% else %}
+          <span class="cover-badge">{{ book.percentage | pct }}</span>
+          <div class="cover-progress"><span style="width: {{ book.percentage * 100 }}%"></span></div>
+        {% endif %}
+      {% endif %}
+    </figure>
+  </a>
+  <header class="card-header">
+    <h3 class="book-title"><a href="/books/{{ book.document_hash }}">{{ book.title }}</a></h3>
+    {% if book.authors %}<p class="book-author">{{ book.authors }}</p>{% endif %}
+    {% if book.series %}<p class="book-series">{{ book.series }}{% if book.series_index %} #{{ book.series_index }}{% endif %}</p>{% endif %}
+  </header>
+  <div class="list-progress">
+    {% if book.has_progress %}
+      <div class="meter{% if book.percentage >= 0.99 %} finished{% endif %}"><span style="width: {{ book.percentage * 100 }}%"></span></div>
+      <span>{{ book.percentage | pct }}</span>
+    {% else %}
+      <span class="badge">{{ t(key="status_unread") }}</span>
+    {% endif %}
+  </div>
+</article>
+{%- endcomponent book_card %}
+
+{#- Dismissible flash message rendered from `error` / `notice` context values. -#}
+{% component flash(error: string = "", notice: string = "", @locale) -%}
+{% if error %}
+<div class="flash error" role="alert">
+  <p>{{ error }}</p>
+  <button type="button" class="icon-button" data-dismiss aria-label="{{ t(key="common_dismiss") }}">{{<icon name="x"/>}}</button>
+</div>
+{% endif %}
+{% if notice %}
+<div class="flash success" role="status">
+  <p>{{ notice }}</p>
+  <button type="button" class="icon-button" data-dismiss aria-label="{{ t(key="common_dismiss") }}">{{<icon name="x"/>}}</button>
+</div>
+{% endif %}
+{%- endcomponent flash %}

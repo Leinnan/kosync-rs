@@ -6,7 +6,7 @@ mod common;
 
 use axum::http::StatusCode;
 
-use common::{app, login, register_plaintext, send_html};
+use common::{app, follow_flash, login, register_plaintext, send_html};
 
 /// Content type for HTML form submissions.
 const FORM: &str = "application/x-www-form-urlencoded";
@@ -41,7 +41,7 @@ async fn admin_panel_lists_and_creates_users() {
 
     // The new account can log in with the password set by the admin.
     let bob = login(&app, "bob", "secret").await;
-    assert!(!bob.is_empty());
+    assert_ne!(bob.len(), 0);
 }
 
 #[tokio::test]
@@ -80,15 +80,15 @@ async fn admin_account_is_protected() {
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER);
-        let location = headers.get("location").unwrap().to_str().unwrap();
+        let page = follow_flash(&app, &admin, &headers).await;
         assert!(
-            location.contains("error=protected"),
-            "{action} should protect the admin account, got {location}"
+            page.contains("cannot be modified"),
+            "{action} should protect the admin account"
         );
     }
 
     let again = login(&app, "admin", "admin").await;
-    assert!(!again.is_empty());
+    assert_ne!(again.len(), 0);
 }
 
 #[tokio::test]
@@ -146,7 +146,7 @@ async fn admin_can_reset_password() {
     assert_eq!(status, StatusCode::SEE_OTHER);
 
     let cookie = login(&app, "alice", "newpass").await;
-    assert!(!cookie.is_empty());
+    assert_ne!(cookie.len(), 0);
 }
 
 #[tokio::test]

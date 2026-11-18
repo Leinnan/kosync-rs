@@ -8,7 +8,9 @@ mod common;
 use axum::{Router, http::StatusCode};
 use sqlx::SqlitePool;
 
-use common::{basic, build_epub, build_raw_epub, multipart, png, send_bytes, test_config};
+use common::{
+    basic, build_epub, build_raw_epub, login, multipart, png, send_bytes, send_html, test_config,
+};
 use kosync_rs::{AppState, backfill_covers, build_state, init_db, router};
 
 /// A plain chapter page without pictures.
@@ -24,7 +26,7 @@ async fn app_with_state() -> (Router, AppState, SqlitePool) {
 
     let config = test_config(&url, &books_dir, false);
     let pool = init_db(&config).await.unwrap();
-    let state = build_state(&config, pool.clone());
+    let state = build_state(&config, pool.clone()).unwrap();
     (router(state.clone()), state, pool)
 }
 
@@ -427,4 +429,67 @@ async fn backfill_skips_covers_that_cannot_be_measured() {
     // No thumbnail and no size can be produced, so nothing is rewritten.
     assert_eq!(backfill_covers(&state).await, 0);
     assert_eq!(backfill_covers(&state).await, 0);
+}
+
+/// The stored cover tint of the only publication.
+async fn stored_tint(pool: &SqlitePool) -> Option<String> {
+    sqlx::query_scalar("SELECT cover_tint FROM publications")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn uploads_record_a_cover_tint_and_backfill_restores_it() {
+    let (app, state, pool) = app_with_state().await;
+    let hash = upload(&app, &build_epub(Some(&png(60, 90)))).await;
+
+    let tint = stored_tint(&pool)
+        .await
+        .expect("a tint is taken from the thumbnail");
+    assert!(tint.starts_with('#') && tint.len() == 7, "{tint}");
+
+    // An import from before tints were recorded.
+    sqlx::query("UPDATE publications SET cover_tint = NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(backfill_covers(&state).await, 1);
+    assert_eq!(stored_tint(&pool).await, Some(tint.clone()));
+    assert_eq!(backfill_covers(&state).await, 0);
+
+    // The book page paints its hero and generated covers with it.
+    let cookie = login(&app, "admin", "admin").await;
+    let (_, _, body) = send_html(
+        &app,
+        "GET",
+        &format!("/books/{hash}"),
+        &[("cookie", &cookie)],
+        "",
+    )
+    .await;
+    assert!(
+        body.contains(&format!("--tint: {tint}")),
+        "the hero uses the tint"
+    );
+}
+
+#[tokio::test]
+async fn books_without_covers_get_a_title_tint() {
+    let (app, _, pool) = app_with_state().await;
+    let hash = upload(&app, &build_epub(None)).await;
+    assert_eq!(stored_tint(&pool).await, None);
+    let cookie = login(&app, "admin", "admin").await;
+    let (_, _, body) = send_html(
+        &app,
+        "GET",
+        &format!("/books/{hash}"),
+        &[("cookie", &cookie)],
+        "",
+    )
+    .await;
+    assert!(
+        body.contains("--tint: hsl("),
+        "a tint derived from the title"
+    );
 }
