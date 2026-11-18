@@ -68,3 +68,17 @@ async fn static_files_are_versioned_and_compressed() {
         .unwrap();
     assert_eq!(missing.status(), 404);
 }
+
+#[tokio::test]
+async fn every_page_links_the_favicon_and_favicon_ico_serves_it() {
+    let app = common::app(true).await;
+    let page = common::send_html(&app, "GET", "/login", &[], "").await.2;
+    assert!(page.contains(r#"rel="icon""#), "{page}");
+    assert!(page.contains("/static/favicon.svg?v="), "{page}");
+
+    let (status, headers, body) =
+        common::send_bytes(&app, "GET", "/favicon.ico", &[], Vec::new()).await;
+    assert_eq!(status, 200);
+    assert_eq!(headers["content-type"], "image/svg+xml");
+    assert!(body.starts_with(b"<svg"));
+}

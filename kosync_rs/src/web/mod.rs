@@ -88,6 +88,7 @@ pub(crate) fn router(max_upload_bytes: usize) -> Router<AppState> {
         )
         .route("/admin/users/{username}/delete", post(admin::delete))
         .route("/static/{*path}", get(static_file))
+        .route("/favicon.ico", get(favicon))
 }
 
 /// Page templates, compiled into the binary.
@@ -162,6 +163,15 @@ async fn static_file(
     headers: HeaderMap,
 ) -> Response {
     match state.assets.respond(&path, uri.query(), &headers).await {
+        Some(response) => response,
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// Serve the site icon at `/favicon.ico`, which browsers and feed readers
+/// request without reading the page's `<link rel="icon">`.
+async fn favicon(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    match state.assets.respond("favicon.svg", None, &headers).await {
         Some(response) => response,
         None => StatusCode::NOT_FOUND.into_response(),
     }
